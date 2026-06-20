@@ -69,8 +69,11 @@ if not all([x in j for x in required_list]):
     print("incomplete list in rvfi_reference.json", file=sys.stderr)
     exit(1)
 
+unexpected = [key for key in j if key not in required_list]
+
 if not all([x in required_list for x in j]):
     print("spurious item in rvfi_reference.json", file=sys.stderr)
+    print(unexpected)
     exit(1)
 
 if not all([set(j[x]) <= allowed_char for x in j]):
