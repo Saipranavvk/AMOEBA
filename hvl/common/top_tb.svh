@@ -3,8 +3,8 @@
         $value$plusargs("TIMEOUT_ECE411=%d", timeout);
     end
 
-    mem_itf_banked mem_itf(.*);
-    dram_w_burst_frfcfs_controller mem(.itf(mem_itf));
+    mem_itf_w_mask #(.CHANNELS(1), .DWIDTH(32)) mem_itf(.*);
+    simple_memory_32_w_mask mem(.itf(mem_itf));
 
     mon_itf #(.CHANNELS(8)) mon_itf(.*);
     monitor #(.CHANNELS(8)) monitor(.itf(mon_itf));
@@ -12,15 +12,12 @@
     cpu dut(
         .clk            (clk),
         .rst            (rst),
-
-        .bmem_addr  (mem_itf.addr  ),
-        .bmem_read  (mem_itf.read  ),
-        .bmem_write (mem_itf.write ),
-        .bmem_wdata (mem_itf.wdata ),
-        .bmem_ready (mem_itf.ready ),
-        .bmem_raddr (mem_itf.raddr ),
-        .bmem_rdata (mem_itf.rdata ),
-        .bmem_rvalid(mem_itf.rvalid)
+        .mem_addr       (mem_itf.addr  [0]),
+        .mem_rmask      (mem_itf.rmask [0]),
+        .mem_wmask      (mem_itf.wmask [0]),
+        .mem_rdata      (mem_itf.rdata [0]),
+        .mem_wdata      (mem_itf.wdata [0]),
+        .mem_resp       (mem_itf.resp  [0])
     );
 
     `include "rvfi_reference.svh"

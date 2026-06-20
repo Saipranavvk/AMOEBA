@@ -141,7 +141,7 @@ import rv32i_types::*;
         pc_next    = pc;
         mem_addr   = 'x;
         mem_rmask  = '0;
-        mem_wmask  = '1;
+        mem_wmask  = '0;
         mem_wdata  = 'x;
         rd_v       = 'x;
         load_ir    = 1'b0;
