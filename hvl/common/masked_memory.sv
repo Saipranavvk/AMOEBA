@@ -33,14 +33,30 @@ module simple_memory_32_w_mask #(
             itf.rdata[0] <= 'x;
             unique case (state)
             MEMORY_STATE_IDLE: begin
-                if (|itf.rmask[0]) begin
-                    state <= MEMORY_STATE_READ;
-                    delay_counter <= DELAY;
-                end
-                if (|itf.wmask[0]) begin
-                    state <= MEMORY_STATE_WRITE;
-                    delay_counter <= DELAY;
-                end
+            if (|itf.rmask[0]) begin
+                $display(
+                    "[%0t] MEM READ REQ  addr=%h rmask=%b",
+                    $time,
+                    itf.addr[0],
+                    itf.rmask[0]
+                );
+            
+                state <= MEMORY_STATE_READ;
+                delay_counter <= DELAY;
+            end
+            
+            if (|itf.wmask[0]) begin
+                $display(
+                    "[%0t] MEM WRITE REQ addr=%h wmask=%b wdata=%h",
+                    $time,
+                    itf.addr[0],
+                    itf.wmask[0],
+                    itf.wdata[0]
+                );
+            
+                state <= MEMORY_STATE_WRITE;
+                delay_counter <= DELAY;
+            end
             end
             MEMORY_STATE_READ: begin
                 if (delay_counter == 2) begin
@@ -61,6 +77,15 @@ module simple_memory_32_w_mask #(
                 delay_counter <= delay_counter - 1;
             end
             MEMORY_STATE_WRITE: begin
+                $display(
+                    "[%0t] MEM WRITE state delay=%0d addr=%h wmask=%b wdata=%h resp=%b",
+                    $time,
+                    delay_counter,
+                    itf.addr[0],
+                    itf.wmask[0],
+                    itf.wdata[0],
+                    itf.resp[0]
+                );
                 if (delay_counter == 2) begin
                     itf.resp[0] <= 1'b1;
                 end

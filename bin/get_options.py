@@ -20,7 +20,7 @@ if sys.argv[1] == "no_float":
     print(retval)
 
 if sys.argv[1] == "arch":
-    retval = "rv32im"
+    retval = "rv32i"
     if j["f_ext"]:
         retval += 'f'
     if j["c_ext"]:

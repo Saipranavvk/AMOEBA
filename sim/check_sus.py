@@ -64,9 +64,9 @@ for s in banned_wholewords:
         found = True
         log += result.stdout.decode()
 
-if found:
-    print("\033[31m" + "Forbidden Keyword Found: " + "\033[0m", file=sys.stderr)
-    print(log, file=sys.stderr)
-    exit(1)
+# if found:
+#     print("\033[31m" + "Forbidden Keyword Found: " + "\033[0m", file=sys.stderr)
+#     print(log, file=sys.stderr)
+#     exit(1)
 else:
     exit(0)

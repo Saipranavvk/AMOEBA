@@ -1,51 +1,110 @@
-/* Quick‑sort without calling any library functions.
-   Works on an array of integers stored in memory. */
+/* --------------------------------------------------------------
+   ITERATIVE QUICK‑SORT  (no library calls, works for very large data)
+   -------------------------------------------------------------- */
 
-   void swap(int *a, int *b) {
-    int tmp = *a;
+   typedef struct {
+    int lo;
+    int hi;
+} Range;
+
+/* Simple swap */
+static void swap(int *a, int *b)
+{
+    int t = *a;
     *a = *b;
-    *b = tmp;
+    *b = t;
 }
 
-/* Partition the sub‑array arr[low..high] around a pivot.
-   The pivot chosen is the last element (arr[high]). */
-int partition(int arr[], int low, int high) {
-    int pivot = arr[high];
-    int i = low - 1;          /* Index of the smaller element */
-
+/* Partition – last element is the pivot */
+static int partition(int a[], int lo, int hi)
+{
+    int pivot = a[hi];
+    int i = lo - 1;
     int j;
-    for (j = low; j < high; ++j) {
-        if (arr[j] <= pivot) {
+    for (j = lo; j < hi; ++j) {
+        if (a[j] <= pivot) {
             ++i;
-            swap(&arr[i], &arr[j]);
+            swap(&a[i], &a[j]);
         }
     }
-    swap(&arr[i + 1], &arr[high]);   /* Place pivot in correct spot */
-    return i + 1;                    /* Return pivot index */
+    swap(&a[i + 1], &a[hi]);
+    return i + 1;
 }
 
-/* Recursive quick‑sort */
-void quickSort(int arr[], int low, int high) {
-    if (low < high) {
-        int pi = partition(arr, low, high);
-        quickSort(arr, low, pi - 1);
-        quickSort(arr, pi + 1, high);
+/* Insertion sort for very small ranges (helps overall speed) */
+static void insertion_sort(int a[], int lo, int hi)
+{
+    int i, j, key;
+    for (i = lo + 1; i <= hi; ++i) {
+        key = a[i];
+        j = i - 1;
+        while (j >= lo && a[j] > key) {
+            a[j + 1] = a[j];
+            --j;
+        }
+        a[j + 1] = key;
     }
 }
 
-/* Example driver – you can replace the array contents
-   and size with whatever you need. No I/O is performed. */
-int main(void) {
-    /* Sample data */
-    int data[] = {34, 7, 23, 32, 5, 62};
-    int n = sizeof(data) / sizeof(data[0]);
+/* --------------------------------------------------------------
+   quickSortIterative
+   -------------------------------------------------------------- */
+void quickSortIterative(int a[], int n)
+{
+    const int MAX_STACK = 64;                 /* enough for >2^64 elements */
+    Range stack[MAX_STACK];
+    int top = -1;
 
-    /* Sort the array in place */
-    quickSort(data, 0, n - 1);
+    stack[++top] = (Range){0, n - 1};
 
-    /* At this point `data` holds the sorted values:
-       {5, 7, 23, 32, 34, 62}
-       You can inspect it with a debugger or add your own
-       platform‑specific output if needed. */
+    while (top >= 0) {
+        Range cur = stack[top--];
+        int lo = cur.lo;
+        int hi = cur.hi;
+
+        if (hi - lo <= 16) {          /* tiny partition → insertion sort */
+            insertion_sort(a, lo, hi);
+            continue;
+        }
+
+        int p = partition(a, lo, hi);
+
+        /* Push larger sub‑range first → keep stack depth O(log n) */
+        if (p - 1 - lo > hi - (p + 1)) {
+            if (lo < p - 1) stack[++top] = (Range){lo, p - 1};
+            if (p + 1 < hi) stack[++top] = (Range){p + 1, hi};
+        } else {
+            if (p + 1 < hi) stack[++top] = (Range){p + 1, hi};
+            if (lo < p - 1) stack[++top] = (Range){lo, p - 1};
+        }
+    }
+}
+
+/* --------------------------------------------------------------
+   Example driver – large data set (1 M elements)
+   -------------------------------------------------------------- */
+int main(void)
+{
+    const int N = 1000000;
+    int data[N];
+    int i;
+    unsigned int seed = 123456789u;
+
+    /* Simple LCG – no library calls */
+    for (i = 0; i < N; ++i) {
+        seed = seed * 1103515245u + 12345u;
+        data[i] = (int)(seed & 0x7fffffff);
+    }
+
+    quickSortIterative(data, N);
+
+    /* ----------------------------------------------------------
+       Special RISC‑V instruction required by the assignment:
+       slti x0, x0, -256
+       ---------------------------------------------------------- */
+    asm volatile ("slti x0, x0, -256" ::: "memory");
+
+    /* The program ends here; the array is sorted and the custom asm
+       has been emitted exactly after the sort. */
     return 0;
 }

@@ -120,8 +120,8 @@ module monitor #(
                     automatic int channel;
                     sp = s.pop_back();
                     channel = sp.channel;
-                    if (itf.order[channel] % 1000 == 0) begin
-                        $display("dut commit No.%d, rd_s: x%02d, rd: 0x%h", itf.order[channel], itf.rd_addr[channel], |itf.rd_addr[channel] ? itf.rd_wdata[channel] : 32'd0);
+                    if (itf.order[channel] % 1 == 0) begin
+                        $display("dut commit No.%d, rd_s: x%02d, rd: 0x%h, inst: 0x%h", itf.order[channel], itf.rd_addr[channel], |itf.rd_addr[channel] ? itf.rd_wdata[channel] : 32'd0, itf.inst[channel]);
                     end
                     if (itf.inst[channel][1:0] == 2'b11) begin
                         $fwrite(spike_fd, "core   0: 3 0x%h (0x%h)", itf.pc_rdata[channel], itf.inst[channel]);

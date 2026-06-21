@@ -1,23 +1,26 @@
-    longint timeout;
+  longint timeout;
     initial begin
         $value$plusargs("TIMEOUT_ECE411=%d", timeout);
     end
 
-    mem_itf_w_mask #(.CHANNELS(1), .DWIDTH(32)) mem_itf(.*);
-    simple_memory_32_w_mask mem(.itf(mem_itf));
+    mem_itf_w_mask mem_itf(.*);
+
+    // Pick one of the two options (only one of these should be uncommented at a time):
+    simple_memory_32_w_mask simple_memory(.itf(mem_itf)); // For directed testing with PROG
+    // random_tb random_tb(.itf(mem_itf)); // For randomized testing
 
     mon_itf #(.CHANNELS(8)) mon_itf(.*);
     monitor #(.CHANNELS(8)) monitor(.itf(mon_itf));
 
     cpu dut(
-        .clk            (clk),
-        .rst            (rst),
-        .mem_addr       (mem_itf.addr  [0]),
-        .mem_rmask      (mem_itf.rmask [0]),
-        .mem_wmask      (mem_itf.wmask [0]),
-        .mem_rdata      (mem_itf.rdata [0]),
-        .mem_wdata      (mem_itf.wdata [0]),
-        .mem_resp       (mem_itf.resp  [0])
+        .clk          (clk),
+        .rst          (rst),
+        .mem_addr     (mem_itf.addr [0]),
+        .mem_rmask    (mem_itf.rmask[0]),
+        .mem_wmask    (mem_itf.wmask[0]),
+        .mem_rdata    (mem_itf.rdata[0]),
+        .mem_wdata    (mem_itf.wdata[0]),
+        .mem_resp     (mem_itf.resp [0])
     );
 
     `include "rvfi_reference.svh"
