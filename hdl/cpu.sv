@@ -1,5 +1,5 @@
 module cpu
-import rv32i_types::*;
+import riscv_types::*;
 (
     input   logic           clk,
     input   logic           rst,

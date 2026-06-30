@@ -1,3 +1,6 @@
 [submodule "hdl/cvw"]
 	path = hdl/cvw
 	url = https://github.com/vedvyas5/cvw.git
+[submodule "third_party/riscv-formal"]
+	path = third_party/riscv-formal
+	url = https://github.com/SymbioticEDA/riscv-formal

@@ -1,5 +1,8 @@
 module monitor #(
-    parameter CHANNELS = 1
+    parameter int CHANNELS = 1,
+    parameter int XLEN = 64,
+    parameter int ILEN = 32,
+    parameter int MEM_BYTES = XLEN / 8
 )(
     mon_itf itf
 );
@@ -499,30 +502,30 @@ module monitor #(
 
         logic [CHANNELS*1 -1:0] rvfi_valid;
         logic [CHANNELS*64-1:0] rvfi_order;
-        logic [CHANNELS*32-1:0] rvfi_insn;
+        logic [CHANNELS*XLEN-1:0] rvfi_insn;
         logic [CHANNELS*1 -1:0] rvfi_trap;
         logic [CHANNELS*1 -1:0] rvfi_halt;
         logic [CHANNELS*1 -1:0] rvfi_intr;
         logic [CHANNELS*2 -1:0] rvfi_mode;
         logic [CHANNELS*5 -1:0] rvfi_rs1_addr;
         logic [CHANNELS*5 -1:0] rvfi_rs2_addr;
-        logic [CHANNELS*32-1:0] rvfi_rs1_rdata;
-        logic [CHANNELS*32-1:0] rvfi_rs2_rdata;
+        logic [CHANNELS*XLEN-1:0] rvfi_rs1_rdata;
+        logic [CHANNELS*XLEN-1:0] rvfi_rs2_rdata;
         logic [CHANNELS*5 -1:0] rvfi_rd_addr;
-        logic [CHANNELS*32-1:0] rvfi_rd_wdata;
-        logic [CHANNELS*32-1:0] rvfi_pc_rdata;
-        logic [CHANNELS*32-1:0] rvfi_pc_wdata;
-        logic [CHANNELS*32-1:0] rvfi_mem_addr;
-        logic [CHANNELS*4 -1:0] rvfi_mem_rmask;
-        logic [CHANNELS*4 -1:0] rvfi_mem_wmask;
-        logic [CHANNELS*32-1:0] rvfi_mem_rdata;
-        logic [CHANNELS*32-1:0] rvfi_mem_wdata;
+        logic [CHANNELS*XLEN-1:0] rvfi_rd_wdata;
+        logic [CHANNELS*XLEN-1:0] rvfi_pc_rdata;
+        logic [CHANNELS*XLEN-1:0] rvfi_pc_wdata;
+        logic [CHANNELS*XLEN-1:0] rvfi_mem_addr;
+        logic [CHANNELS*MEM_BYTES -1:0] rvfi_mem_rmask;
+        logic [CHANNELS*MEM_BYTES -1:0] rvfi_mem_wmask;
+        logic [CHANNELS*XLEN-1:0] rvfi_mem_rdata;
+        logic [CHANNELS*XLEN-1:0] rvfi_mem_wdata;
         logic [CHANNELS*1 -1:0] rvfi_mem_extamo;
 
-        assign rvfi_trap = '0;
-        assign rvfi_intr = '0;
-        assign rvfi_mode = '0;
-        assign rvfi_mem_extamo = '0;
+        assign rvfi_trap = itf.trap;
+        assign rvfi_intr = itf.intr;
+        assign rvfi_mode = itf.mode;
+        assign rvfi_mem_extamo = itf.mem_extamo;
         generate for (genvar channel = 0; channel < CHANNELS; channel++) begin : assign_channels
             assign rvfi_valid    [channel*1  +: 1 ] =   itf.valid    [channel];
             assign rvfi_order    [channel*64 +: 64] =   itf.order    [channel];
@@ -530,22 +533,22 @@ module monitor #(
             assign rvfi_halt     [channel*1  +: 1 ] =   itf.halt              ;
             assign rvfi_rs1_addr [channel*5  +: 5 ] =   itf.rs1_addr [channel];
             assign rvfi_rs2_addr [channel*5  +: 5 ] =   itf.rs2_addr [channel];
-            assign rvfi_rs1_rdata[channel*32 +: 32] = (|itf.rs1_addr [channel]) ? itf.rs1_rdata[channel] : '0;
-            assign rvfi_rs2_rdata[channel*32 +: 32] = (|itf.rs2_addr [channel]) ? itf.rs2_rdata[channel] : '0;
+            assign rvfi_rs1_rdata[channel*XLEN +: XLEN] = (|itf.rs1_addr [channel]) ? itf.rs1_rdata[channel] : '0;
+            assign rvfi_rs2_rdata[channel*XLEN +: XLEN] = (|itf.rs2_addr [channel]) ? itf.rs2_rdata[channel] : '0;
             assign rvfi_rd_addr  [channel*5  +: 5 ] =   itf.rd_addr  [channel];
-            assign rvfi_rd_wdata [channel*32 +: 32] = (|itf.rd_addr  [channel]) ? itf.rd_wdata[channel] : '0;
-            assign rvfi_pc_rdata [channel*32 +: 32] =   itf.pc_rdata [channel];
-            assign rvfi_pc_wdata [channel*32 +: 32] =   itf.pc_wdata [channel];
-            assign rvfi_mem_addr [channel*32 +: 32] = { itf.mem_addr [channel][31:2], 2'b00};
+            assign rvfi_rd_wdata [channel*XLEN +: XLEN] = (|itf.rd_addr  [channel]) ? itf.rd_wdata[channel] : '0;
+            assign rvfi_pc_rdata [channel*XLEN +: XLEN] =   itf.pc_rdata [channel];
+            assign rvfi_pc_wdata [channel*XLEN +: XLEN] =   itf.pc_wdata [channel];
+            assign rvfi_mem_addr [channel*XLEN +: XLEN] = { itf.mem_addr [channel][XLEN-1:2], 2'b00};
             assign rvfi_mem_rmask[channel*4  +: 4 ] =   itf.mem_rmask[channel];
             assign rvfi_mem_wmask[channel*4  +: 4 ] =   itf.mem_wmask[channel];
-            assign rvfi_mem_rdata[channel*32 +: 32] =   itf.mem_rdata[channel];
-            assign rvfi_mem_wdata[channel*32 +: 32] =   itf.mem_wdata[channel];
+            assign rvfi_mem_rdata[channel*XLEN +: XLEN] =   itf.mem_rdata[channel];
+            assign rvfi_mem_wdata[channel*XLEN +: XLEN] =   itf.mem_wdata[channel];
         end endgenerate
 
         logic [15:0] errcode;
 
-        riscv_formal_monitor_rv32imc monitor(
+        riscv_formal_monitor_rv64imac monitor(
             .clock              (itf.clk),
             .reset              (itf.rst),
             .rvfi_valid         (rvfi_valid),

@@ -1,13 +1,14 @@
 interface mem_itf_w_mask #(
-    parameter               CHANNELS = 1,
-    parameter               DWIDTH = 32,
-    parameter               MWIDTH = DWIDTH / 8
+    parameter int CHANNELS = 1,
+    parameter int AWIDTH = 64,
+    parameter int DWIDTH = 64,
+    parameter int MWIDTH = DWIDTH / 8
 )(
     input   bit             clk,
     input   bit             rst
 );
 
-    logic   [31:0]          addr    [CHANNELS];
+    logic   [AWIDTH-1:0]    addr    [CHANNELS];
     logic   [MWIDTH-1:0]    rmask   [CHANNELS];
     logic   [MWIDTH-1:0]    wmask   [CHANNELS];
     logic   [DWIDTH-1:0]    rdata   [CHANNELS];

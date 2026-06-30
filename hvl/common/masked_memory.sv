@@ -1,6 +1,9 @@
-module simple_memory_32_w_mask #(
+module simple_memory_w_mask #(
     parameter DELAY = 3
-)(
+    parameter int AWIDTH = 64,
+    parameter int DWIDTH = 64,
+    parameter int MWIDTH = DWIDTH / 8
+    )(
     mem_itf_w_mask.mem itf
 );
 
@@ -9,7 +12,7 @@ module simple_memory_32_w_mask #(
         $value$plusargs("MEMLST_ECE411=%s", memfile);
     end
 
-    logic [31:0] internal_memory_array [logic [31:2]];
+    logic [DWIDTH-1:0] internal_memory_array [logic [DWIDTH-1:2]];
 
     enum int {
         MEMORY_STATE_IDLE,
@@ -60,16 +63,16 @@ module simple_memory_32_w_mask #(
             end
             MEMORY_STATE_READ: begin
                 if (delay_counter == 2) begin
-                    automatic logic [31:0] rdata_xmask;
+                    automatic logic [DWIDTH-1:0] rdata_xmask;
                     itf.resp[0] <= 1'b1;
-                    for (int i = 0; i < 4; i++) begin
+                    for (int i = 0; i < MWIDTH; i++) begin
                         if (itf.rmask[0][i]) begin
                             rdata_xmask[i*8 +: 8] = '0;
                         end else begin
                             rdata_xmask[i*8 +: 8] = 'x;
                         end
                     end
-                    itf.rdata[0] <= internal_memory_array[itf.addr[0][31:2]] ^ rdata_xmask;
+                    itf.rdata[0] <= internal_memory_array[itf.addr[0][DWIDTH-1:2]] ^ rdata_xmask;
                 end
                 if (delay_counter == 1) begin
                     state <= MEMORY_STATE_IDLE;
@@ -90,9 +93,9 @@ module simple_memory_32_w_mask #(
                     itf.resp[0] <= 1'b1;
                 end
                 if (delay_counter == 1) begin
-                    for (int i = 0; i < 4; i++) begin
+                    for (int i = 0; i < MWIDTH; i++) begin
                         if (itf.wmask[0][i]) begin
-                            internal_memory_array[itf.addr[0][31:2]][i*8 +: 8] = itf.wdata[0][i*8 +: 8];
+                            internal_memory_array[itf.addr[0][DWIDTH-1:2]][i*8 +: 8] = itf.wdata[0][i*8 +: 8];
                         end
                     end
                     state <= MEMORY_STATE_IDLE;
@@ -103,8 +106,8 @@ module simple_memory_32_w_mask #(
         end
     end
 
-    logic [31:0] cached_addr;
-    logic [3:0] cached_mask;
+    logic [DWIDTH-1:0] cached_addr;
+    logic [MWIDTH-1:0] cached_mask;
 
     always_ff @(posedge itf.clk) begin
         if (|itf.rmask[0]) begin

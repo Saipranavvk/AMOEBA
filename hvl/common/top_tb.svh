@@ -3,25 +3,43 @@
         $value$plusargs("TIMEOUT_ECE411=%d", timeout);
     end
 
-    mem_itf_w_mask mem_itf(.*);
+    localparam int CHANNELS = 1;
+    localparam int XLEN = 64;
+    localparam int ILEN = 32;
+
+    mem_itf_w_mask #(
+        .CHANNELS(1),
+        .AWIDTH(XLEN),
+        .DWIDTH(XLEN)
+    ) mem_itf(.*);
 
     // Pick one of the two options (only one of these should be uncommented at a time):
-    simple_memory_32_w_mask simple_memory(.itf(mem_itf)); // For directed testing with PROG
+    simple_memory_w_mask simple_memory(.itf(mem_itf)); // For directed testing with PROG
     // random_tb random_tb(.itf(mem_itf)); // For randomized testing
 
-    mon_itf #(.CHANNELS(8)) mon_itf(.*);
-    monitor #(.CHANNELS(8)) monitor(.itf(mon_itf));
+    mon_itf #(
+        .CHANNELS(CHANNELS),
+        .XLEN(XLEN),
+        .ILEN(ILEN)
+    ) mon_itf(.*);
 
-    cpu dut(
-        .clk          (clk),
-        .rst          (rst),
-        .mem_addr     (mem_itf.addr [0]),
-        .mem_rmask    (mem_itf.rmask[0]),
-        .mem_wmask    (mem_itf.wmask[0]),
-        .mem_rdata    (mem_itf.rdata[0]),
-        .mem_wdata    (mem_itf.wdata[0]),
-        .mem_resp     (mem_itf.resp [0])
-    );
+   monitor #(
+        .CHANNELS(CHANNELS),
+        .XLEN(XLEN),
+        .ILEN(ILEN)
+    ) monitor(.itf(mon_itf));
+
+    rv64_core_wrapper dut (
+        .clk(clk),
+        .rst(rst),
+        .mem_addr(mem_itf.addr[0]),
+        .mem_rmask(mem_itf.rmask[0]),
+        .mem_wmask(mem_itf.wmask[0]),
+        .mem_rdata(mem_itf.rdata[0]),
+        .mem_wdata(mem_itf.wdata[0]),
+        .mem_resp(mem_itf.resp[0])
+        // plus monitor outputs if not reached by hierarchical rvfi_reference.json
+);
 
     `include "rvfi_reference.svh"
 
