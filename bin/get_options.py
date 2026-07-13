@@ -20,17 +20,29 @@ if sys.argv[1] == "no_float":
     print(retval)
 
 if sys.argv[1] == "arch":
-    retval = "rv32i"
-    if j["f_ext"]:
-        retval += 'f'
-    if j["c_ext"]:
-        retval += 'c'
+    xlen = j.get("xlen", 32)
+    if xlen == 64:
+        retval = "rv64gc"
+        if j.get("zicsr", False):
+            retval += "_zicsr"
+        if j.get("zifencei", False):
+            retval += "_zifencei"
+    else:
+        retval = "rv32i"
+        if j["f_ext"]:
+            retval += 'f'
+        if j["c_ext"]:
+            retval += 'c'
     print(retval)
 
 if sys.argv[1] == "abi":
-    retval = "ilp32"
-    if j["f_ext"]:
-        retval += 'f'
+    xlen = j.get("xlen", 32)
+    if xlen == 64:
+        retval = "lp64d" if j.get("f_ext", False) else "lp64"
+    else:
+        retval = "ilp32"
+        if j["f_ext"]:
+            retval += 'f'
     print(retval)
 
 if sys.argv[1] == "clock":

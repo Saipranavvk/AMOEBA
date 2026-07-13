@@ -4,16 +4,16 @@ _start:
     .cfi_startproc
     .cfi_undefined ra
 
-    li x0, 0
-    li x1, 0
-    li x2, 0
-    li x3, 0
-    li x4, 0
-    li x5, 0
-    li x6, 0
-    li x7, 0
-    li x8, 0
-    li x9, 0
+    # x0 is hardwired to zero; initialize all other integer registers
+    li x1,  0
+    li x2,  0
+    li x3,  0
+    li x4,  0
+    li x5,  0
+    li x6,  0
+    li x7,  0
+    li x8,  0
+    li x9,  0
     li x10, 0
     li x11, 0
     li x12, 0
@@ -42,34 +42,36 @@ _initbss:
     la t2, _bss_vma_end
     beq t1, t2, _setup
 _initbss_loop:
-    sw x0, 0(t1)
-    addi t1, t1, 4
+    sd x0, 0(t1)
+    addi t1, t1, 8
     bltu t1, t2, _initbss_loop
 
 _setup:
-    # .option push
-    # .option norelax
-    # la gp, __global_pointer$
-    # .option pop
+    # Point mtvec at halt so any unexpected trap stops simulation cleanly
+    la t0, _trap_halt
+    csrw mtvec, t0
+    # Disable machine-level interrupts (timer/external)
+    csrwi mie, 0
     la sp, _stack_top
     add s0, sp, zero
     call main
+    # Halt instruction recognized by monitor: slti x0, x0, -256
     slti x0, x0, -256
 _fini:
     beq zero, zero, _fini
-    .rept 977
-    nop
-    .endr
+_trap_halt:
+    slti x0, x0, -256
+    beq zero, zero, _trap_halt
     .cfi_endproc
 
 .globl _sbrk
 _sbrk:
-    lw t0, _heap_ptr
+    ld t0, _heap_ptr
     add a0, a0, t0
-    sw a0, _heap_ptr, t1
+    sd a0, _heap_ptr, t1
     mv a0, t0
     ret
 
 .section ".data.sbrk"
 _heap_ptr:
-    .word __global_pointer$
+    .dword __global_pointer$

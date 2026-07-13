@@ -2,6 +2,21 @@
 lint_off -rule WIDTHEXPAND  -file "*/rvfimon.v"
 lint_off -rule WIDTHTRUNC   -file "*/rvfimon.v"
 lint_off -rule WIDTHTRUNC   -file "*/monitor.sv"
+lint_off -rule WIDTHEXPAND  -file "*/monitor.sv"
+lint_off -rule SYNCASYNCNET -file "*/rv64_core_wrapper.sv"
+lint_off -rule SYNCASYNCNET -file "*/ahb_to_memitf.sv"
+lint_off -rule SELRANGE     -file "*/rvfimon.v"
+lint_off -rule PINMISSING   -file "*/top_tb.svh"
+lint_off -rule VARHIDDEN    -file "*/monitor.sv"
+lint_off -rule VARHIDDEN    -file "*/mon_itf.sv"
+lint_off -rule VARHIDDEN    -file "*/top_tb.svh"
+lint_off -rule VARHIDDEN    -file "*/types.sv"
+lint_off -rule VARHIDDEN    -file "*/pkg/types.sv"
+lint_off -rule EOFNEWLINE   -file "*/types.sv"
+lint_off -rule UNOPTTHREADS
+lint_off -rule PROCASSINIT   -file "*/monitor.sv"
+lint_off -rule PROCASSINIT   -file "*/mon_itf.sv"
+lint_off -rule PROCASSINIT   -file "*/mem_itf.sv"
 lint_off -rule BLKSEQ       -file "*/rvfimon.v"
 lint_off -rule BLKSEQ       -file "*/dram_w_burst_frfcfs_controller.sv"
 lint_off -rule BLKSEQ       -file "*/masked_memory.sv"
@@ -15,3 +30,8 @@ lint_off -rule UNUSEDSIGNAL
 lint_off -rule PINCONNECTEMPTY
 lint_off -rule CASEINCOMPLETE
 lint_off -rule LATCH
+// Suppress warnings from CVW third-party source
+lint_off -rule WIDTHTRUNC     -file "*/hdl/cvw/*"
+lint_off -rule WIDTHEXPAND    -file "*/hdl/cvw/*"
+lint_off -rule IMPLICITSTATIC -file "*/hdl/cvw/*"
+lint_off -rule VARHIDDEN      -file "*/hdl/cvw/*"

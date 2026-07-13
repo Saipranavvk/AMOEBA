@@ -149,7 +149,7 @@ module monitor #(
                     `endif
                     if (|itf.mem_rmask[channel]) begin
                         automatic int first_1 = 0;
-                        for(int i = 0; i < 4; i++) begin
+                        for(int i = 0; i < 8; i++) begin
                             if(itf.mem_rmask[channel][i]) begin
                                 first_1 = i;
                                 break;
@@ -160,12 +160,12 @@ module monitor #(
                     if (|itf.mem_wmask[channel]) begin
                         automatic int amount_o_1 = 0;
                         automatic int first_1 = 0;
-                        for(int i = 0; i < 4; i++) begin
+                        for(int i = 0; i < 8; i++) begin
                             if(itf.mem_wmask[channel][i]) begin
                                 amount_o_1 += 1;
                             end
                         end
-                        for(int i = 0; i < 4; i++) begin
+                        for(int i = 0; i < 8; i++) begin
                             if(itf.mem_wmask[channel][i]) begin
                                 first_1 = i;
                                 break;
@@ -312,7 +312,7 @@ module monitor #(
                         end
                     end
                     if (|itf.mem_rmask[channel]) begin
-                        for (int i = 0; i < 4; i++) begin
+                        for (int i = 0; i < 8; i++) begin
                             if (itf.mem_rmask[channel][i]) begin
                                 if ($isunknown(itf.mem_rdata[channel][i*8 +: 8])) begin
                                     $error("RVFI Interface Error: mem_rdata contains 'x");
@@ -322,7 +322,7 @@ module monitor #(
                         end
                     end
                     if (|itf.mem_wmask[channel]) begin
-                        for (int i = 0; i < 4; i++) begin
+                        for (int i = 0; i < 8; i++) begin
                             if (itf.mem_wmask[channel][i]) begin
                                 if ($isunknown(itf.mem_wdata[channel][i*8 +: 8])) begin
                                     $error("RVFI Interface Error: mem_wdata contains 'x");
@@ -339,30 +339,32 @@ module monitor #(
 
     `ifndef ECE411_NO_SPIKE_DPI
 
+        // NOTE: spike.so must be recompiled with uint64_t for wide fields when upgrading
+        // from RV32 to RV64. Until then, DPI comparisons check lower 32 bits only.
         typedef struct packed {
             bit [31:0] inst;
             bit [31:0] trapped;
             bit [31:0] rs1_addr;
             bit [31:0] rs2_addr;
-            bit [31:0] rs1_rdata;
-            bit [31:0] rs2_rdata;
+            bit [63:0] rs1_rdata;
+            bit [63:0] rs2_rdata;
             bit [31:0] rd_addr;
-            bit [31:0] rd_wdata;
+            bit [63:0] rd_wdata;
             bit [31:0] frs1_addr;
             bit [31:0] frs2_addr;
             bit [31:0] frs3_addr;
-            bit [31:0] frs1_rdata;
-            bit [31:0] frs2_rdata;
-            bit [31:0] frs3_rdata;
+            bit [63:0] frs1_rdata;
+            bit [63:0] frs2_rdata;
+            bit [63:0] frs3_rdata;
             bit [31:0] frd_addr;
-            bit [31:0] frd_wdata;
-            bit [31:0] pc_rdata;
-            bit [31:0] pc_wdata;
-            bit [31:0] mem_addr;
+            bit [63:0] frd_wdata;
+            bit [63:0] pc_rdata;
+            bit [63:0] pc_wdata;
+            bit [63:0] mem_addr;
             bit [31:0] mem_rmask;
             bit [31:0] mem_wmask;
-            bit [31:0] mem_rdata;
-            bit [31:0] mem_wdata;
+            bit [63:0] mem_rdata;
+            bit [63:0] mem_wdata;
         } spike_dpi_rvfi_itf_t;
 
         import "DPI-C" function void spike_dpi_init(string mem_space, string elf_file);
@@ -374,7 +376,7 @@ module monitor #(
             automatic string elf_file;
             $value$plusargs("ELF_ECE411=%s", elf_file);
             $display("using elf file %s", elf_file);
-            spike_dpi_init("-m0xaaaaa000:0x55556000", elf_file);
+            spike_dpi_init("-m0x80000000:0x10000000", elf_file);
         end
 
         final begin
@@ -427,21 +429,21 @@ module monitor #(
                 `endif
                 diff[15] = itf.pc_rdata  [channel] != spike_dpi_rvfi_itf.pc_rdata      ;
                 diff[16] = itf.pc_wdata  [channel] != spike_dpi_rvfi_itf.pc_wdata      ;
-                diff[18] = itf.mem_rmask [channel] != spike_dpi_rvfi_itf.mem_rmask[3:0];
-                diff[19] = itf.mem_wmask [channel] != spike_dpi_rvfi_itf.mem_wmask[3:0];
-                if (spike_dpi_rvfi_itf.mem_rmask[3:0] != 4'd0) begin
-                    diff[17] = {itf.mem_addr[channel][31:2], 2'b00} != spike_dpi_rvfi_itf.mem_addr;
+                diff[18] = itf.mem_rmask [channel] != spike_dpi_rvfi_itf.mem_rmask[7:0];
+                diff[19] = itf.mem_wmask [channel] != spike_dpi_rvfi_itf.mem_wmask[7:0];
+                if (spike_dpi_rvfi_itf.mem_rmask[7:0] != 8'd0) begin
+                    diff[17] = {itf.mem_addr[channel][63:3], 3'b000} != spike_dpi_rvfi_itf.mem_addr;
                     diff[20] = 1'b0;
-                    for (int i = 0; i < 4; i++) begin
+                    for (int i = 0; i < 8; i++) begin
                         if (spike_dpi_rvfi_itf.mem_rmask[i] && (itf.mem_rdata[channel][i*8 +: 8] != spike_dpi_rvfi_itf.mem_rdata[i*8 +: 8])) begin
                             diff[20] = 1'b1;
                         end
                     end
                 end
-                if (spike_dpi_rvfi_itf.mem_wmask[3:0] != 4'd0) begin
-                    diff[17] = {itf.mem_addr[channel][31:2], 2'b00} != spike_dpi_rvfi_itf.mem_addr;
+                if (spike_dpi_rvfi_itf.mem_wmask[7:0] != 8'd0) begin
+                    diff[17] = {itf.mem_addr[channel][63:3], 3'b000} != spike_dpi_rvfi_itf.mem_addr;
                     diff[21] = 1'b0;
-                    for (int i = 0; i < 4; i++) begin
+                    for (int i = 0; i < 8; i++) begin
                         if (spike_dpi_rvfi_itf.mem_wmask[i] && (itf.mem_wdata[channel][i*8 +: 8] != spike_dpi_rvfi_itf.mem_wdata[i*8 +: 8])) begin
                             diff[21] = 1'b1;
                         end
@@ -516,17 +518,17 @@ module monitor #(
         logic [CHANNELS*XLEN-1:0] rvfi_pc_rdata;
         logic [CHANNELS*XLEN-1:0] rvfi_pc_wdata;
         logic [CHANNELS*XLEN-1:0] rvfi_mem_addr;
-        logic [CHANNELS*MEM_BYTES -1:0] rvfi_mem_rmask;
-        logic [CHANNELS*MEM_BYTES -1:0] rvfi_mem_wmask;
+        logic [CHANNELS*MEM_BYTES-1:0] rvfi_mem_rmask;
+        logic [CHANNELS*MEM_BYTES-1:0] rvfi_mem_wmask;
         logic [CHANNELS*XLEN-1:0] rvfi_mem_rdata;
         logic [CHANNELS*XLEN-1:0] rvfi_mem_wdata;
         logic [CHANNELS*1 -1:0] rvfi_mem_extamo;
 
-        assign rvfi_trap = itf.trap;
-        assign rvfi_intr = itf.intr;
-        assign rvfi_mode = itf.mode;
-        assign rvfi_mem_extamo = itf.mem_extamo;
         generate for (genvar channel = 0; channel < CHANNELS; channel++) begin : assign_channels
+            assign rvfi_trap      [channel]          = itf.trap      [channel];
+            assign rvfi_intr      [channel]          = itf.intr      [channel];
+            assign rvfi_mode      [channel*2 +: 2]   = itf.mode      [channel];
+            assign rvfi_mem_extamo[channel]          = itf.mem_extamo[channel];
             assign rvfi_valid    [channel*1  +: 1 ] =   itf.valid    [channel];
             assign rvfi_order    [channel*64 +: 64] =   itf.order    [channel];
             assign rvfi_insn     [channel*32 +: 32] =   itf.inst     [channel];
@@ -535,15 +537,15 @@ module monitor #(
             assign rvfi_rs2_addr [channel*5  +: 5 ] =   itf.rs2_addr [channel];
             assign rvfi_rs1_rdata[channel*XLEN +: XLEN] = (|itf.rs1_addr [channel]) ? itf.rs1_rdata[channel] : '0;
             assign rvfi_rs2_rdata[channel*XLEN +: XLEN] = (|itf.rs2_addr [channel]) ? itf.rs2_rdata[channel] : '0;
-            assign rvfi_rd_addr  [channel*5  +: 5 ] =   itf.rd_addr  [channel];
-            assign rvfi_rd_wdata [channel*XLEN +: XLEN] = (|itf.rd_addr  [channel]) ? itf.rd_wdata[channel] : '0;
-            assign rvfi_pc_rdata [channel*XLEN +: XLEN] =   itf.pc_rdata [channel];
-            assign rvfi_pc_wdata [channel*XLEN +: XLEN] =   itf.pc_wdata [channel];
-            assign rvfi_mem_addr [channel*XLEN +: XLEN] = { itf.mem_addr [channel][XLEN-1:2], 2'b00};
-            assign rvfi_mem_rmask[channel*4  +: 4 ] =   itf.mem_rmask[channel];
-            assign rvfi_mem_wmask[channel*4  +: 4 ] =   itf.mem_wmask[channel];
-            assign rvfi_mem_rdata[channel*XLEN +: XLEN] =   itf.mem_rdata[channel];
-            assign rvfi_mem_wdata[channel*XLEN +: XLEN] =   itf.mem_wdata[channel];
+            assign rvfi_rd_addr  [channel*5         +: 5        ] =   itf.rd_addr  [channel];
+            assign rvfi_rd_wdata [channel*XLEN      +: XLEN     ] = (|itf.rd_addr  [channel]) ? itf.rd_wdata[channel] : '0;
+            assign rvfi_pc_rdata [channel*XLEN      +: XLEN     ] =   itf.pc_rdata [channel];
+            assign rvfi_pc_wdata [channel*XLEN      +: XLEN     ] =   itf.pc_wdata [channel];
+            assign rvfi_mem_addr [channel*XLEN      +: XLEN     ] = { itf.mem_addr [channel][XLEN-1:3], 3'b000};
+            assign rvfi_mem_rmask[channel*MEM_BYTES +: MEM_BYTES] =   itf.mem_rmask[channel];
+            assign rvfi_mem_wmask[channel*MEM_BYTES +: MEM_BYTES] =   itf.mem_wmask[channel];
+            assign rvfi_mem_rdata[channel*XLEN      +: XLEN     ] =   itf.mem_rdata[channel];
+            assign rvfi_mem_wdata[channel*XLEN      +: XLEN     ] =   itf.mem_wdata[channel];
         end endgenerate
 
         logic [15:0] errcode;

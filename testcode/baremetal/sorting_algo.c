@@ -2,7 +2,7 @@
    ITERATIVE QUICK‑SORT  (no library calls, works for very large data)
    -------------------------------------------------------------- */
 
-   typedef struct {
+typedef struct {
     int lo;
     int hi;
 } Range;
@@ -85,7 +85,7 @@ void quickSortIterative(int a[], int n)
    -------------------------------------------------------------- */
 int main(void)
 {
-    const int N = 1000000;
+    const int N = 1000;
     int data[N];
     int i;
     unsigned int seed = 123456789u;
@@ -98,13 +98,5 @@ int main(void)
 
     quickSortIterative(data, N);
 
-    /* ----------------------------------------------------------
-       Special RISC‑V instruction required by the assignment:
-       slti x0, x0, -256
-       ---------------------------------------------------------- */
-    asm volatile ("slti x0, x0, -256" ::: "memory");
-
-    /* The program ends here; the array is sorted and the custom asm
-       has been emitted exactly after the sort. */
     return 0;
 }

@@ -38,7 +38,19 @@ start_file = os.path.join(script_dir, "startup.s")
 linker_script = os.path.join(script_dir, "link.ld")
 compile = True
 
-assembler="riscv64-unknown-elf-gcc"
+
+assembler = "riscv64-unknown-elf-gcc"
+if not shutil.which(assembler):
+    fallbacks = ["riscv64-elf-gcc", "riscv64-elf-gcc-15.2.0"]
+    for candidate in fallbacks:
+        if shutil.which(candidate):
+            assembler = candidate
+            break
+    else:
+        print("Error: No valid RISC-V compiler toolchain found in your PATH.")
+        assembler = None
+print(f"Using assembler: {assembler}")
+
 objdump="riscv64-unknown-elf-objdump"
 objcopy="riscv64-unknown-elf-objcopy"
 
@@ -103,6 +115,9 @@ for a in addressability:
             section_start = int(s[4], 16)
             section_size = int(s[2], 16)
             section_end = section_start + section_size
+            # Skip non-LOAD sections (debug, attributes, comments) — VMA = 0
+            if section_start == 0 and section_size > 0:
+                continue
             if section_start % a != 0 or section_size % a != 0 or section_end % a != 0:
                 print(sprint_color("[ERROR] ", RED) + "Non aligned section not supported")
                 exit(1)

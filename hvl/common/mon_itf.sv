@@ -24,6 +24,17 @@ interface mon_itf #(
             logic [4:0]         rd_addr    [CHANNELS];
             logic [XLEN-1:0]    rd_wdata   [CHANNELS];
 
+            `ifndef ECE411_NO_FLOAT
+            logic [5:0]         frs1_addr  [CHANNELS];
+            logic [5:0]         frs2_addr  [CHANNELS];
+            logic [5:0]         frs3_addr  [CHANNELS];
+            logic [XLEN-1:0]    frs1_rdata [CHANNELS];
+            logic [XLEN-1:0]    frs2_rdata [CHANNELS];
+            logic [XLEN-1:0]    frs3_rdata [CHANNELS];
+            logic [5:0]         frd_addr   [CHANNELS];
+            logic [XLEN-1:0]    frd_wdata  [CHANNELS];
+            `endif
+
             logic [XLEN-1:0]    pc_rdata   [CHANNELS];
             logic [XLEN-1:0]    pc_wdata   [CHANNELS];
             logic [XLEN-1:0]    mem_addr   [CHANNELS];

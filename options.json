@@ -1,7 +1,10 @@
 {
     "clock"       : 10000,
-    "c_ext"       : false,
-    "f_ext"       : false,
+    "xlen"        : 64,
+    "c_ext"       : true,
+    "f_ext"       : true,
+    "zicsr"       : true,
+    "zifencei"    : true,
     "bmem_0_on_x" : false,
     "dw_ip"       : [],
     "synth": {

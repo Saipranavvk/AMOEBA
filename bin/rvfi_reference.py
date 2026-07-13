@@ -26,7 +26,7 @@ rvfi_list = [
     "intr"      ,
     "mode"      ,
     "ixl"       ,
-    "mem_extano" ,
+    "mem_extamo" ,
     "rs1_addr"  ,
     "rs2_addr"  ,
     "rs1_rdata" ,
