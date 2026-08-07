@@ -19,8 +19,28 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y verilator python3 python3-pip gcc g++ make
+          sudo apt-get install -y python3 python3-pip gcc g++ make \
+            flex bison libfl-dev help2man
           pip3 install --quiet pyyaml
+
+      - name: Cache Verilator v5.026
+        id: cache-verilator
+        uses: actions/cache@v4
+        with:
+          path: /opt/verilator
+          key: verilator-5.026-${{ runner.os }}
+
+      - name: Build Verilator v5.026 from source
+        if: steps.cache-verilator.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/verilator/verilator --branch v5.026 --depth=1 /tmp/verilator-src
+          cd /tmp/verilator-src && autoconf
+          ./configure --prefix=/opt/verilator
+          make -j$(nproc)
+          make install
+
+      - name: Add Verilator to PATH
+        run: echo "/opt/verilator/bin" >> $GITHUB_PATH
 
       - name: Check generated files are up to date
         run: make -C sim check-generated
@@ -41,9 +61,29 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y verilator python3 python3-pip gcc g++ make \
+          sudo apt-get install -y python3 python3-pip gcc g++ make \
+            flex bison libfl-dev help2man \
             gcc-riscv64-unknown-elf device-tree-compiler libboost-regex-dev libboost-system-dev
           pip3 install --quiet pyyaml
+
+      - name: Cache Verilator v5.026
+        id: cache-verilator
+        uses: actions/cache@v4
+        with:
+          path: /opt/verilator
+          key: verilator-5.026-${{ runner.os }}
+
+      - name: Build Verilator v5.026 from source
+        if: steps.cache-verilator.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/verilator/verilator --branch v5.026 --depth=1 /tmp/verilator-src
+          cd /tmp/verilator-src && autoconf
+          ./configure --prefix=/opt/verilator
+          make -j$(nproc)
+          make install
+
+      - name: Add Verilator to PATH
+        run: echo "/opt/verilator/bin" >> $GITHUB_PATH
 
       - name: Cache Spike
         id: cache-spike
@@ -81,9 +121,29 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y verilator python3 python3-pip gcc g++ make \
+          sudo apt-get install -y python3 python3-pip gcc g++ make \
+            flex bison libfl-dev help2man \
             gcc-riscv64-unknown-elf
           pip3 install --quiet pyyaml
+
+      - name: Cache Verilator v5.026
+        id: cache-verilator
+        uses: actions/cache@v4
+        with:
+          path: /opt/verilator
+          key: verilator-5.026-${{ runner.os }}
+
+      - name: Build Verilator v5.026 from source
+        if: steps.cache-verilator.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/verilator/verilator --branch v5.026 --depth=1 /tmp/verilator-src
+          cd /tmp/verilator-src && autoconf
+          ./configure --prefix=/opt/verilator
+          make -j$(nproc)
+          make install
+
+      - name: Add Verilator to PATH
+        run: echo "/opt/verilator/bin" >> $GITHUB_PATH
 
       - name: Clone FreeRTOS-Kernel
         run: git clone --depth=1 https://github.com/FreeRTOS/FreeRTOS-Kernel.git ~/FreeRTOS-Kernel
