@@ -383,7 +383,7 @@ Two independent checkers validate every retired instruction simultaneously:
 -------begin spike mismatch--------
 signal     diff       dut     spike
 inst            h00004782 h00004782
-rd_addr    --->        15        15
+rd_addr    --->        14        15
 rd_wdata        h00000000 h00004782
 mem_rmask             0x00      0x00
 ...
