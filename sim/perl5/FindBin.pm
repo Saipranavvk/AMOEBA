@@ -17,7 +17,7 @@ BEGIN {
     my $cwd = getcwd();
     my $abs_bin = $Bin =~ m{^/} ? $Bin : "$cwd/$Bin";
     $RealBin = abs_path($abs_bin) || $abs_bin;
-    $RealScript = abs_path("$RealBin/$Script") || "$RealBin/$Script";
+    $RealScript = $Script;
 }
 
 sub import {
