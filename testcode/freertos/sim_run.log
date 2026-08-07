@@ -1,0 +1,12 @@
+mkdir -p spike
+find . -maxdepth 1 -name "dump.fst" -delete
+./build/Vtop_tb \
+    +TIMEOUT_ECE411=50000000 \
+    +CLOCK_PERIOD_PS_ECE411=10000 \
+    +BRAM_0_ON_X_ECE411=0 \
+    +MEMLST_ECE411="/home/sai/Desktop/git-repos/ECE427/AMOEBA/sim/bin/memory_8.lst" \
+    +ELF_ECE411="/home/sai/Desktop/git-repos/ECE427/AMOEBA/testcode/freertos/freertos_wally.elf" \
+    |& tee sim.log
+make: *** wait: No child processes.  Stop.
+make: *** Waiting for unfinished jobs....
+make: *** wait: No child processes.  Stop.

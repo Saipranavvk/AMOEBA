@@ -10,6 +10,7 @@ static uint64_t s_fregs[32];
 static FILE    *s_pipe;
 static char     s_next_line[512];
 static int      s_has_next;
+static int      s_pipe_dead;  // set when pipe is NULL or hits EOF without any commits
 // Program base address parsed from mem_space (e.g. "0x80000000" from "-m0x80000000:...")
 // Boot ROM lines (PC < s_prog_base) are skipped so Spike stays in sync with the DUT.
 static uint64_t s_prog_base;
@@ -36,7 +37,8 @@ static uint8_t mem_mask(uint32_t funct3, uint32_t offset) {
 extern "C" void spike_dpi_init(const char *mem_space, const char *elf_file) {
     memset(s_iregs, 0, sizeof(s_iregs));
     memset(s_fregs, 0, sizeof(s_fregs));
-    s_has_next = 0;
+    s_has_next  = 0;
+    s_pipe_dead = 0;
     s_next_line[0] = '\0';
 
     // Parse base address from "-m0x<base>:<size>" so we can skip Spike's boot ROM
@@ -84,6 +86,7 @@ extern "C" const char *spike_dpi_dasm() { return ""; }
 //   [33]=trapped  [34]=inst
 extern "C" unsigned int spike_dpi_next(uint32_t *r) {
     memset(r, 0, 35 * sizeof(uint32_t));
+    if (s_pipe_dead) return 2;  // spike not running; caller should $fatal
 
     char     line[512];
     uint64_t cur_pc   = 0;
@@ -115,7 +118,9 @@ extern "C" unsigned int spike_dpi_next(uint32_t *r) {
 
         if (!got_insn) {
             cur_pc = pc; insn = (uint32_t)enc; got_insn = 1;
-        } else if (pc != cur_pc) {
+        } else {
+            // Different PC = next instruction; same PC = next loop iteration (self-loop/tight loop).
+            // Either way, stash as lookahead for pc_wdata and stop reading.
             memcpy(s_next_line, line, sizeof(s_next_line));
             s_has_next = 1;
             break;
@@ -151,7 +156,7 @@ extern "C" unsigned int spike_dpi_next(uint32_t *r) {
         }
     }
 
-    if (!got_insn) return 0;
+    if (!got_insn) { s_pipe_dead = 1; return 2; }
 
     // -------- decode RISC-V instruction fields --------
     uint32_t op        = insn & 0x7Fu;

@@ -2,11 +2,11 @@ SHELL=/bin/bash -o pipefail
 .SHELLFLAGS += -e
 
 export PKG_SRCS = $(PWD)/../pkg/types.sv
-CVW_SRCS       := $(shell find $(PWD)/../hdl/cvw/src -name '*.sv' -o -name '*.v' 2>/dev/null)
-LEGACY         := $(PWD)/../hdl/cpu.sv $(PWD)/../hdl/regfile.sv $(PWD)/../hdl/provided_cache.sv
-export HDL_SRCS = $(filter-out $(PWD)/../hdl/cvw/% $(LEGACY), $(shell find $(PWD)/../hdl -name '*.sv')) $(CVW_SRCS)
+export REPO_ROOT = $(abspath $(PWD)/..)
+CVW_SRCS       := $(shell find $(PWD)/../third_party/cvw/src -name '*.sv' -o -name '*.v' 2>/dev/null)
+export HDL_SRCS = $(shell find $(PWD)/../hdl -name '*.sv') $(CVW_SRCS)
 export SRAM_LIB = $(shell find $(PWD)/../sram/output/ -name "*.db")
-export DESIGN_TOP = cvw_rvfi_wrapper
+export DESIGN_TOP = rv64_core_wrapper
 
 .PHONY: lint
 lint: clean

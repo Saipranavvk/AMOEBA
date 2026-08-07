@@ -4,6 +4,9 @@ ENTRY(_start)
 _text_start = 0x80000000;
 _stack_top  = 0x8ff00000;
 
+PROVIDE(tohost   = 0x80800000);
+PROVIDE(fromhost = 0x80800008);
+
 SECTIONS
 {
 

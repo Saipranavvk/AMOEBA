@@ -1,3 +1,4 @@
+set_option incdir +$env(REPO_ROOT)/pkg +$env(REPO_ROOT)/third_party/cvw/src +$env(REPO_ROOT)/third_party/cvw/config/rv64gc
 read_file -type verilog $env(PKG_SRCS) $env(HDL_SRCS)
 if {$env(SRAM_LIB) != ""} {
     set_option enable_gateslib_autocompile yes

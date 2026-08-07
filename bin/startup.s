@@ -55,7 +55,11 @@ _setup:
     la sp, _stack_top
     add s0, sp, zero
     call main
-    # Halt instruction recognized by monitor: slti x0, x0, -256
+    # Signal exit via HTif tohost protocol: write 1 (exit(0)) to tohost
+    li t0, 1
+    la t1, tohost
+    sd t0, 0(t1)
+    # Fallback halt for monitor
     slti x0, x0, -256
 _fini:
     beq zero, zero, _fini

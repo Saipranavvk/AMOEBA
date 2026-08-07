@@ -1,12 +1,12 @@
 SHELL=/bin/bash -o pipefail
 .SHELLFLAGS += -e
 
-export PKG_SRCS = $(PWD)/../pkg/types.sv
-CVW_SRCS       := $(shell find $(PWD)/../hdl/cvw/src -name '*.sv' -o -name '*.v' 2>/dev/null)
-LEGACY         := $(PWD)/../hdl/cpu.sv $(PWD)/../hdl/regfile.sv $(PWD)/../hdl/provided_cache.sv
-export HDL_SRCS = $(filter-out $(PWD)/../hdl/cvw/% $(LEGACY), $(shell find $(PWD)/../hdl -name '*.sv')) $(CVW_SRCS)
-export SRAM_LIB = $(shell find $(PWD)/../sram/output/ -name "*.db")
-export DESIGN_TOP = cvw_rvfi_wrapper
+export PKG_SRCS = $(CURDIR)/../pkg/types.sv
+export REPO_ROOT = $(abspath $(CURDIR)/..)
+CVW_SRCS       := $(shell find $(CURDIR)/../third_party/cvw/src -name '*.sv' -o -name '*.v' 2>/dev/null)
+export HDL_SRCS = $(shell find $(CURDIR)/../hdl -name '*.sv') $(CVW_SRCS)
+export SRAM_LIB = $(shell find $(CURDIR)/../sram/output/ -name "*.db")
+export DESIGN_TOP = rv64_core_wrapper
 
 export STD_CELL_LIB=$(FREEPDK45)/stdcells.db
 export STD_CELL_ALIB=$(FREEPDK45)/alib
@@ -19,16 +19,16 @@ synth: clean
 
 outputs/synth.ddc:
 	mkdir -p reports outputs
-	python3 $(PWD)/../bin/get_options.py clock
-	python3 $(PWD)/../bin/get_options.py min_power
-	python3 $(PWD)/../bin/get_options.py synth_cmd
-	python3 $(PWD)/../bin/get_options.py synth_cmd_inc
-	python3 $(PWD)/../bin/get_options.py synth_inc_iter
-	export ECE411_CLOCK_PERIOD_PS=$(shell python3 $(PWD)/../bin/get_options.py clock) ;\
-	export ECE411_MIN_POWER=$(shell python3 $(PWD)/../bin/get_options.py min_power) ;\
-	export ECE411_COMPILE_CMD="$(shell python3 $(PWD)/../bin/get_options.py synth_cmd)" ;\
-	export ECE411_COMPILE_CMD_INC="$(shell python3 $(PWD)/../bin/get_options.py synth_cmd_inc)" ;\
-	export ECE411_COMPILE_ITER="$(shell python3 $(PWD)/../bin/get_options.py synth_inc_iter)" ;\
+	python3 $(CURDIR)/../bin/get_options.py clock
+	python3 $(CURDIR)/../bin/get_options.py min_power
+	python3 $(CURDIR)/../bin/get_options.py synth_cmd
+	python3 $(CURDIR)/../bin/get_options.py synth_cmd_inc
+	python3 $(CURDIR)/../bin/get_options.py synth_inc_iter
+	export ECE411_CLOCK_PERIOD_PS=$(shell python3 $(CURDIR)/../bin/get_options.py clock) ;\
+	export ECE411_MIN_POWER=$(shell python3 $(CURDIR)/../bin/get_options.py min_power) ;\
+	export ECE411_COMPILE_CMD="$(shell python3 $(CURDIR)/../bin/get_options.py synth_cmd)" ;\
+	export ECE411_COMPILE_CMD_INC="$(shell python3 $(CURDIR)/../bin/get_options.py synth_cmd_inc)" ;\
+	export ECE411_COMPILE_ITER="$(shell python3 $(CURDIR)/../bin/get_options.py synth_inc_iter)" ;\
 	export ECE411_DC_CORES=4 ;\
 	dc_shell -f synthesis.tcl |& tee reports/synthesis.log
 	rm -f  *.log

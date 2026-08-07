@@ -1,11 +1,0 @@
-using memory file /home/sai/Desktop/git-repos/ECE427/AMOEBA/sim/bin/memory_8.lst
-using memory file /home/sai/Desktop/git-repos/ECE427/AMOEBA/sim/bin/memory_8.lst
-
-=== FreeRTOS on AMOEBA (wallypipelinedsoc) ===CLINT mtime at boot: 130683
-Starting scheduler...UserTask: calling app_main()UserTask: app_main() returned — simulation completeTB: tohost exit(0) -- test PASSED
-- /home/sai/Desktop/git-repos/ECE427/AMOEBA/hvl/common/top_tb.svh:58: Verilog $finish
-Monitor: Total IPC: 0.488172
-Monitor: Total Time:           3336650000
-- S i m u l a t i o n   R e p o r t: Verilator 5.050 2026-07-01
-- Verilator: $finish at 3ms; walltime 18.451 s; speed 180.834 us/s
-- Verilator: cpu 218.066 s on 16 threads; allocated 652 MB

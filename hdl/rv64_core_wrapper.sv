@@ -120,7 +120,7 @@ module rv64_core_wrapper import cvw::*; (
 
     // Fixed monitor outputs
     assign monitor_intr      = InterruptTakenPending & InstrValidW;
-    assign monitor_mode      = 2'b11;  // M-mode (CVW starts in M-mode)
+    assign monitor_mode      = soc.core.PrivilegeModeW;
     assign monitor_ixl       = 2'b10;  // RV64 (XLEN=64)
     assign monitor_mem_extamo = 1'b0;  // no AMO
 

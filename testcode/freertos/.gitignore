@@ -1,0 +1,7 @@
+build/
+spike/
+*.elf
+*.dis
+sim.log
+dump.fst
+time.txt

@@ -7,9 +7,9 @@
     localparam int XLEN = 64;
     localparam int ILEN = 32;
 
-    // RISC-V HTif tohost address — fixed in freertos_amoeba.ld and any future
-    // OS-level linker scripts.  Bare-metal tests do not write here; this check
-    // is therefore backward-compatible with all existing testcode/ programs.
+    // RISC-V HTif tohost address — fixed in both bin/link.ld (bare-metal) and
+    // freertos_wally.ld (FreeRTOS) at 0x80800000.  All test programs write
+    // here on exit; the testbench fires $finish or $fatal depending on code.
     localparam longint unsigned TOHOST_ADDR = 64'h8080_0000;
 
     mem_itf_w_mask #(
@@ -45,8 +45,31 @@
 
     `include "rvfi_reference.svh"
 
-    // HTif tohost monitor: detect OS-level exit() calls.
+    // HTif tohost monitor via RVFI: fires at store retirement, before cbo.flush.
+    // Required for Spike DPI co-sim: Spike exits when it sees the sd to tohost,
+    // so the next RVFI commit (cbo.flush) would trigger $fatal from spike_dpi_next.
     // Protocol: write (exit_code << 1) | 1 to tohost; bit 0 set means exit.
+    always @(posedge clk) begin
+        if (!rst && mon_itf.valid[0] && mon_itf.mem_wmask[0] != '0 &&
+                mon_itf.mem_addr[0] == TOHOST_ADDR) begin
+            automatic longint unsigned tohost_val;
+            tohost_val = mon_itf.mem_wdata[0];
+            if (tohost_val[0]) begin
+                if (tohost_val == 64'd1) begin
+                    $display("TB: tohost exit(0) -- test PASSED");
+                    $finish;
+                end else begin
+                    $error("TB: tohost exit(%0d) -- test FAILED",
+                           tohost_val >> 1);
+                    $fatal;
+                end
+            end
+        end
+    end
+
+    // AHB-level tohost fallback: fires after cbo.flush evicts the cache line.
+    // Not needed when Spike DPI is active (RVFI check above fires first), but
+    // kept as a safety net for bare-metal runs without DPI co-sim.
     always @(posedge clk) begin
         if (!rst && mem_itf.wmask[0] != '0 &&
                 mem_itf.addr[0] == TOHOST_ADDR) begin

@@ -52,7 +52,17 @@ if not shutil.which(assembler):
 print(f"Using assembler: {assembler}")
 
 objdump="riscv64-unknown-elf-objdump"
+if not shutil.which(objdump):
+    for candidate in ["riscv64-elf-objdump", "riscv64-elf-objdump-15.2.0"]:
+        if shutil.which(candidate):
+            objdump = candidate
+            break
 objcopy="riscv64-unknown-elf-objcopy"
+if not shutil.which(objcopy):
+    for candidate in ["riscv64-elf-objcopy", "riscv64-elf-objcopy-15.2.0"]:
+        if shutil.which(candidate):
+            objcopy = candidate
+            break
 
 result = subprocess.run(f"python3 {script_dir}/get_options.py arch", shell=True, stdout=subprocess.PIPE)
 arch = result.stdout.decode().split('\n')[0]

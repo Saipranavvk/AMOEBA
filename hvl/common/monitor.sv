@@ -8,7 +8,7 @@ module monitor #(
 );
 
     function bit is_halt(input logic [31:0] inst);
-        is_halt = inst inside {32'h00000063, 32'h0000006f, 32'hF0002013};
+        is_halt = inst inside {32'h00000063, 32'h0000006f, 32'hf0002013};
     endfunction
 
     always @(posedge itf.clk iff !itf.rst) begin
@@ -389,6 +389,7 @@ module monitor #(
         initial spike_dpi_order = 64'd0;
 
         always @ (posedge itf.clk iff !itf.rst) begin
+            if (!itf.halt) begin
             automatic struct {
                 int unsigned channel;
                 longint unsigned order;
@@ -410,6 +411,9 @@ module monitor #(
                 sp = s.pop_back();
                 channel = sp.channel;
                 retval = spike_dpi_next(spike_dpi_rvfi_itf);
+                if (retval == 2) begin
+                    $fatal(0, "Spike co-simulation: spike binary not found or pipe closed. Build spike with --enable-commitlog per README section 0, or set ECE411_NO_SPIKE_DPI to disable co-sim.");
+                end
                 diff[ 0] = itf.inst      [channel] != spike_dpi_rvfi_itf.inst          ;
                 diff[ 1] = |spike_dpi_rvfi_itf.rs1_addr[4:0]  ? itf.rs1_addr  [channel] != spike_dpi_rvfi_itf.rs1_addr[4:0]  : 1'b0;
                 diff[ 2] = |spike_dpi_rvfi_itf.rs1_addr[4:0]  ? itf.rs1_rdata [channel] != spike_dpi_rvfi_itf.rs1_rdata      : 1'b0;
@@ -496,6 +500,7 @@ module monitor #(
                 end
                 spike_dpi_order = spike_dpi_order + 64'd1;
             end
+            end // !itf.halt
         end
 
     `endif

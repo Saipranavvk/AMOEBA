@@ -27,7 +27,7 @@ with open("reports/power2.rpt") as f:
             elif match.group(2) == "mW":
                 leakage_power = float(match.group(1))
             elif match.group(2) == "W":
-                dynamic_power = float(match.group(1))*1000
+                leakage_power = float(match.group(1))*1000
             else:
                 raise AssertionError
 
