@@ -35,10 +35,17 @@ CFLAGS := -march=$(MARCH) -mabi=$(MABI) -mcmodel=medany \
           -ffunction-sections -fdata-sections \
           -Wa,-march=$(MARCH)
 
+# Add stub headers when the cross-sysroot lacks newlib (e.g. Ubuntu gcc-riscv64-unknown-elf)
+_SYSROOT := $(shell $(CC) -print-sysroot 2>/dev/null)
+ifeq ($(wildcard $(_SYSROOT)/include/stdlib.h),)
+_STUB_INC := -isystem $(abspath stub_include)
+endif
+
 INC := -I$(abspath .) \
        -I$(FREERTOS_KERNEL_DIR)/include \
        -I$(FREERTOS_PORT) \
-       -I$(FREERTOS_PORT_CHIP)
+       -I$(FREERTOS_PORT_CHIP) \
+       $(_STUB_INC)
 
 LDFLAGS := -Tfreertos_wally.ld \
            -Wl,--gc-sections \

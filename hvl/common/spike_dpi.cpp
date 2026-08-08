@@ -14,6 +14,7 @@ static int      s_pipe_dead;  // set when pipe is NULL or hits EOF without any c
 // Program base address parsed from mem_space (e.g. "0x80000000" from "-m0x80000000:...")
 // Boot ROM lines (PC < s_prog_base) are skipped so Spike stays in sync with the DUT.
 static uint64_t s_prog_base;
+static unsigned long long s_nonseq_transitions = 0;  // diagnostic: non-sequential PC transitions
 
 // WData helpers: 35-word array, word[0]=LSB field (mem_wdata[31:0]), word[34]=MSB field (inst)
 static inline void w64(uint32_t *r, int lo, uint64_t v) {
@@ -69,6 +70,10 @@ extern "C" void spike_dpi_init(const char *mem_space, const char *elf_file) {
 }
 
 extern "C" unsigned int spike_dpi_fin() {
+    if (s_nonseq_transitions > 0)
+        fprintf(stderr, "[SPIKE_DPI DIAG] non-sequential PC transitions "
+                "(branches+jumps+interrupts/traps): %llu\n",
+                (unsigned long long)s_nonseq_transitions);
     if (s_pipe) { pclose(s_pipe); s_pipe = NULL; }
     return 0;
 }
@@ -301,6 +306,24 @@ extern "C" unsigned int spike_dpi_next(uint32_t *r) {
         uint64_t npc; unsigned nenc;
         if (sscanf(s_next_line, "core %*u: %*u 0x%lx (0x%x)", &npc, &nenc) == 2)
             pc_wdata_v = npc;
+    }
+
+    // -------- diagnostic: flag non-sequential PC transitions on non-branch instructions --------
+    {
+        uint64_t expected_seq = cur_pc + (comp ? 2u : 4u);
+        if (pc_wdata_v != expected_seq) {
+            s_nonseq_transitions++;
+            if (!comp) {
+                uint32_t op5_ = (insn >> 2) & 0x1Fu;
+                // branch=0x18, JALR=0x19, JAL=0x1B are expected non-sequential; anything else is suspicious
+                if (op5_ != 0x18u && op5_ != 0x19u && op5_ != 0x1Bu)
+                    fprintf(stderr, "[SPIKE_DPI] non-sequential for non-branch instr: "
+                            "pc=0x%lx (0x%x) -> 0x%lx (seq=0x%lx) -- likely interrupt/trap\n",
+                            (unsigned long)cur_pc, insn,
+                            (unsigned long)pc_wdata_v,
+                            (unsigned long)expected_seq);
+            }
+        }
     }
 
     // -------- fill 35-word WData array --------

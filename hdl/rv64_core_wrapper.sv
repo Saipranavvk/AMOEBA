@@ -310,9 +310,12 @@ module rv64_core_wrapper import cvw::*; (
             if (!StallE) InstrRawE_r <= FlushE ? '0 : InstrRawD;
             if (!StallM) InstrRawM_r <= FlushM ? '0 : InstrRawE_r;
             if (!StallW) begin
-                if (TrapM & InstrValidM & InterruptM) begin
-                    // External interrupt: suppress the interrupted instruction;
-                    // RVFI reports it as rvfi_intr=1 on the first handler instruction.
+                if (TrapM & InterruptM) begin
+                    // External interrupt: suppress the interrupted instruction (if any in M)
+                    // and set pending so the first handler instruction gets rvfi_intr=1.
+                    // No InstrValidM guard: interrupt can fire when M is a bubble; the
+                    // suppress is harmless (InstrValidW becomes 0 either way) but
+                    // InterruptTakenPending must be set regardless.
                     InstrValidW <= '0;
                     InterruptTakenPending <= '1;
                 end else begin
@@ -407,11 +410,12 @@ module rv64_core_wrapper import cvw::*; (
 
     logic [63:0] pc_wdata_seq;
     assign pc_wdata_seq = PCW + (InstrRawW[1:0] == 2'b11 ? 64'd4 : 64'd2);
-    assign monitor_pc_wdata = RetW        ? EPCW         :   // mret/sret: return to saved EPC
-                              TrapW       ? TrapVectorW   :   // exception/interrupt: jump to handler
-                              InstrValidM ? PCM           :   // normal: lookahead to M stage
-                              InstrValidE ? PCE           :
-                              InstrValidD ? PCD           :
+    assign monitor_pc_wdata = RetW                 ? EPCW        :   // mret/sret: return to saved EPC
+                              TrapW                ? TrapVectorW :   // exception: jump to handler
+                              (TrapM & InterruptM) ? TrapVectorM :   // interrupt in M: next PC is the handler, not the suppressed M-stage instruction
+                              InstrValidM          ? PCM         :   // normal: lookahead to M stage
+                              InstrValidE          ? PCE         :
+                              InstrValidD          ? PCD         :
                               pc_wdata_seq;
 
     assign monitor_mem_addr   = IEUAdrW & ~64'h7;

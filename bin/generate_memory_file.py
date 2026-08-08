@@ -72,7 +72,7 @@ abi = result.stdout.decode().split('\n')[0]
 opt = "-Ofast -flto"
 warn = "-Wall -Wextra -Wno-unused"
 include = "" if len(input_file) == 1 else f"-I {os.path.dirname(os.path.abspath(input_file[0]))}"
-assembler_args = f"-mcmodel=medany -ffreestanding -nostartfiles -static -static-libgcc -lm -lgcc -lc -Wl,--no-relax -march={arch} -mabi={abi} {opt} {warn} -T {linker_script} {include}"
+assembler_args = f"-mcmodel=medany -ffreestanding -nostartfiles -nostdlib -static -lgcc -Wl,--no-relax -march={arch} -mabi={abi} {opt} {warn} -T {linker_script} {include}"
 
 out_elf_file = os.path.join(work_dir, pathlib.Path(input_file[0]).stem + ".elf")
 out_dis_file = os.path.join(work_dir, pathlib.Path(input_file[0]).stem + ".dis")

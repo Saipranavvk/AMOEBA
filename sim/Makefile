@@ -16,7 +16,8 @@ DW_IP     := $(shell python3 $(CURDIR)/../bin/get_options.py dw_ip)
 VCS_SRCS  := $(PKG_SRCS) $(CORE_SV) $(HDL_SRCS) $(VCS_HVL) $(SRAM_SRCS) $(DW_IP)
 VER_SRCS  := $(PKG_SRCS) $(CORE_SV) $(HDL_SRCS) $(VER_HVL) $(SRAM_SRCS) $(DW_IP)
 
-TIMEOUT   ?= 10000000
+TIMEOUT      ?= 10000000
+WALL_TIMEOUT ?= 600
 PROG_NAME ?= $(notdir $(basename $(PROG)))
 
 ECE411_NO_FLOAT = $(shell python3 $(CURDIR)/../bin/get_options.py no_float)
@@ -71,7 +72,7 @@ run_verilator_top_tb: verilator/build/Vtop_tb $(PROG)
 	python3 $(CURDIR)/../bin/get_options.py bmem_x
 	cd verilator && ./build/Vtop_tb \
 		+TIMEOUT_ECE411=$(TIMEOUT) \
-		+WALL_TIMEOUT_SEC_ECE411=600 \
+		+WALL_TIMEOUT_SEC_ECE411=$(WALL_TIMEOUT) \
 		+CLOCK_PERIOD_PS_ECE411=$(shell python3 $(CURDIR)/../bin/get_options.py clock) \
 		+BRAM_0_ON_X_ECE411=$(shell python3 $(CURDIR)/../bin/get_options.py bmem_x) \
 		+MEMLST_ECE411="$(CURDIR)/bin/memory_8.lst" \

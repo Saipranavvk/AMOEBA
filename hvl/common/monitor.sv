@@ -24,17 +24,29 @@ module monitor #(
         int time_fd;
         initial time_fd = $fopen("./time.txt", "w");
 
-        longint inst_count = longint'(0);
-        longint cycle_count = longint'(0);
-        longint start_time = longint'(0);
-        bit ipc_printed = 1'b0;
+        longint inst_count;
+        longint cycle_count;
+        longint start_time;
+        bit ipc_printed;
 
-        longint power_start_time = longint'(0);
-        bit power_printed = 1'b0;
+        longint power_start_time;
+        bit power_printed;
 
         `ifdef ECE411_VERILATOR
-            bit dump_on = 1'b0;
+            bit dump_on;
         `endif
+
+        initial begin
+            inst_count       = longint'(0);
+            cycle_count      = longint'(0);
+            start_time       = longint'(0);
+            ipc_printed      = 1'b0;
+            power_start_time = longint'(0);
+            power_printed    = 1'b0;
+            `ifdef ECE411_VERILATOR
+                dump_on      = 1'b0;
+            `endif
+        end
 
         always @(posedge itf.clk iff !itf.rst) begin
             cycle_count += longint'(1);
@@ -489,6 +501,18 @@ module monitor #(
                     `endif
                     $display("%010s %04s h%08x h%08x"            , "pc_rdata  ", diff[15] ? "--->" : "    ", itf.pc_rdata  [channel], spike_dpi_rvfi_itf.pc_rdata  );
                     $display("%010s %04s h%08x h%08x"            , "pc_wdata  ", diff[16] ? "--->" : "    ", itf.pc_wdata  [channel], spike_dpi_rvfi_itf.pc_wdata  );
+                    if (diff[16]) begin
+                        automatic logic [63:0] pc_seq_next;
+                        pc_seq_next = itf.pc_rdata[channel]
+                                    + (itf.inst[channel][1:0] != 2'b11 ? 64'd2 : 64'd4);
+                        if (itf.pc_wdata[channel] == pc_seq_next)
+                            $display("  [pc_wdata hint] DUT=sequential(pc+%0d), Spike jumped to %h -- interrupt/trap boundary",
+                                itf.inst[channel][1:0] != 2'b11 ? 2 : 4,
+                                spike_dpi_rvfi_itf.pc_wdata);
+                        else
+                            $display("  [pc_wdata hint] DUT=%h Spike=%h -- both non-sequential",
+                                itf.pc_wdata[channel], spike_dpi_rvfi_itf.pc_wdata);
+                    end
                     $display("%010s %04s h%08x h%08x"            , "mem_addr  ", diff[17] ? "--->" : "    ", itf.mem_addr  [channel], spike_dpi_rvfi_itf.mem_addr  );
                     $display("%010s %04s     b%04b     b%04b"    , "mem_rmask ", diff[18] ? "--->" : "    ", itf.mem_rmask [channel], spike_dpi_rvfi_itf.mem_rmask );
                     $display("%010s %04s     b%04b     b%04b"    , "mem_wmask ", diff[19] ? "--->" : "    ", itf.mem_wmask [channel], spike_dpi_rvfi_itf.mem_wmask );
