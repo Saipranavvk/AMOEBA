@@ -111,7 +111,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y autoconf flex bison libfl-dev help2man zlib1g-dev
+          sudo apt-get install -y autoconf flex bison libfl-dev help2man zlib1g-dev \
+            device-tree-compiler
           pip3 install --quiet pyyaml
 
       - name: Cache Spike executable
@@ -165,16 +166,6 @@ jobs:
       - name: Add Spike to PATH
         run: echo "/tmp/spike-install/bin" >> $GITHUB_PATH
 
-      - name: Restore Verilator cache
-        uses: actions/cache@v4
-        with:
-          path: /opt/verilator
-          key: verilator-5.026-${{ runner.os }}
-          fail-on-cache-miss: true
-
-      - name: Add Verilator to PATH
-        run: echo "/opt/verilator/bin" >> $GITHUB_PATH
-
       - name: Restore Spike DPI build cache
         uses: actions/cache@v4
         with:
@@ -182,8 +173,11 @@ jobs:
           key: spike-build-${{ runner.os }}-${{ github.sha }}
           fail-on-cache-miss: true
 
+      - name: Touch Vtop_tb to prevent timestamp-triggered rebuild
+        run: touch sim/verilator/build/Vtop_tb
+
       - name: Run baremetal test
-        run: PATH=/opt/verilator/bin:$PATH make -C sim run_verilator_top_tb PROG=../testcode/baremetal/${{ matrix.test }}.c
+        run: make -C sim run_verilator_top_tb PROG=../testcode/baremetal/${{ matrix.test }}.c
 
   # ── FreeRTOS: run with cached no-spike simulator ────────────────────────────
   ci-freertos:
@@ -206,16 +200,6 @@ jobs:
       - name: Clone FreeRTOS-Kernel
         run: git clone --depth=1 https://github.com/FreeRTOS/FreeRTOS-Kernel.git ~/FreeRTOS-Kernel
 
-      - name: Restore Verilator cache
-        uses: actions/cache@v4
-        with:
-          path: /opt/verilator
-          key: verilator-5.026-${{ runner.os }}
-          fail-on-cache-miss: true
-
-      - name: Add Verilator to PATH
-        run: echo "/opt/verilator/bin" >> $GITHUB_PATH
-
       - name: Restore FreeRTOS build cache
         uses: actions/cache@v4
         with:
@@ -223,5 +207,8 @@ jobs:
           key: freertos-build-${{ runner.os }}-${{ github.sha }}
           fail-on-cache-miss: true
 
+      - name: Touch Vtop_tb to prevent timestamp-triggered rebuild
+        run: touch sim/verilator/build_freertos/Vtop_tb
+
       - name: Run FreeRTOS test
-        run: PATH=/opt/verilator/bin:$PATH make -C sim freertos
+        run: make -C sim freertos
