@@ -53,9 +53,12 @@ jobs:
 
   # ── Baremetal regression: needs RISC-V toolchain + Spike executable ─────────
   ci-baremetal:
-    name: Baremetal Regression
+    name: Baremetal - ${{ matrix.test }}
     runs-on: ubuntu-latest
     needs: ci-fast
+    strategy:
+      matrix:
+        test: [basic_arith, exit_test, sorting_algo]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -111,8 +114,11 @@ jobs:
       - name: Add Spike to PATH
         run: echo "/tmp/spike-install/bin" >> $GITHUB_PATH
 
-      - name: Run baremetal regression
-        run: make -C sim regression
+      - name: Compile simulator
+        run: make -C sim verilator/build/Vtop_tb
+
+      - name: Run baremetal test
+        run: make -C sim run_verilator_top_tb PROG=../testcode/baremetal/${{ matrix.test }}.c
 
   # ── FreeRTOS: needs RISC-V toolchain + FreeRTOS-Kernel; no Spike needed ─────
   ci-freertos:
