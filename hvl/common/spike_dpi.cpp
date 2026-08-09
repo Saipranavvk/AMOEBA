@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/select.h>
+#include <sys/wait.h>
 
 // Shadow register files (committed state)
 static uint64_t s_iregs[32];
@@ -14,7 +16,7 @@ static int      s_pipe_dead;  // set when pipe is NULL or hits EOF without any c
 // Program base address parsed from mem_space (e.g. "0x80000000" from "-m0x80000000:...")
 // Boot ROM lines (PC < s_prog_base) are skipped so Spike stays in sync with the DUT.
 static uint64_t s_prog_base;
-static unsigned long long s_nonseq_transitions = 0;  // diagnostic: non-sequential PC transitions
+static int s_spike_exit_code = -1;  // Exit status of Spike process: 0=clean, 1=error, -1=unknown
 
 // WData helpers: 35-word array, word[0]=LSB field (mem_wdata[31:0]), word[34]=MSB field (inst)
 static inline void w64(uint32_t *r, int lo, uint64_t v) {
@@ -64,21 +66,49 @@ extern "C" void spike_dpi_init(const char *mem_space, const char *elf_file) {
 
     char cmd[2048];
     snprintf(cmd, sizeof(cmd),
-        "%s --isa=rv64gc_zicsr_zifencei %s --log-commits \"%s\" 2>&1",
+        "%s --isa=rv64gc_zicsr_zifencei %s --log-commits \"%s\" </dev/null 2>&1",
         spike_bin, mem_space, elf_file);
     s_pipe = popen(cmd, "r");
 }
 
 extern "C" unsigned int spike_dpi_fin() {
-    if (s_nonseq_transitions > 0)
-        fprintf(stderr, "[SPIKE_DPI DIAG] non-sequential PC transitions "
-                "(branches+jumps+interrupts/traps): %llu\n",
-                (unsigned long long)s_nonseq_transitions);
-    if (s_pipe) { pclose(s_pipe); s_pipe = NULL; }
+    if (s_pipe) {
+        // Drain any unread output so Spike isn't blocked writing when pclose() waits.
+        // Use select() with a 1-second timeout to avoid hanging if Spike is stuck.
+        int fd = fileno(s_pipe);
+        char drain[4096];
+        struct timeval tv;
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+
+        for (int attempts = 0; attempts < 10; ++attempts) {
+            fd_set readfds;
+            FD_ZERO(&readfds);
+            FD_SET(fd, &readfds);
+            struct timeval tv_copy = tv;
+            int select_ret = select(fd + 1, &readfds, NULL, NULL, &tv_copy);
+            if (select_ret <= 0) break;  // Timeout or error; stop draining
+            if (!FD_ISSET(fd, &readfds)) break;
+            size_t n = fread(drain, 1, sizeof(drain), s_pipe);
+            if (n == 0) break;  // EOF
+        }
+        int status = pclose(s_pipe);
+        s_pipe = NULL;
+        if (s_spike_exit_code == -1)
+            s_spike_exit_code = (WIFEXITED(status) && WEXITSTATUS(status) == 0) ? 0 : 1;
+    }
     return 0;
 }
 
 extern "C" const char *spike_dpi_dasm() { return ""; }
+
+// Force-write a value into Spike's shadow integer register file.  Used by
+// monitor.sv to re-sync Spike's register state after a suppressed MMIO load
+// mismatch (where Spike's device stub returned a different value than the DUT).
+extern "C" void spike_dpi_set_ireg(uint32_t reg, uint64_t val) {
+    if (reg > 0 && reg < 32)
+        s_iregs[reg] = val;
+}
 
 // Called once per retired instruction; fills 35-word WData array r[].
 // WData layout (last SV field = word[0]):
@@ -111,7 +141,13 @@ extern "C" unsigned int spike_dpi_next(uint32_t *r) {
             memcpy(line, s_next_line, sizeof(line));
             s_has_next = 0;
         } else {
-            if (!fgets(line, sizeof(line), s_pipe)) break;
+            if (!fgets(line, sizeof(line), s_pipe)) {
+                // EOF: capture Spike's exit status
+                int status = pclose(s_pipe);
+                s_pipe = NULL;
+                s_spike_exit_code = (WIFEXITED(status) && WEXITSTATUS(status) == 0) ? 0 : 1;
+                break;
+            }
         }
         if (strncmp(line, "core", 4) != 0) continue;
 
@@ -161,7 +197,10 @@ extern "C" unsigned int spike_dpi_next(uint32_t *r) {
         }
     }
 
-    if (!got_insn) { s_pipe_dead = 1; return 2; }
+    if (!got_insn) {
+        s_pipe_dead = 1;
+        return (s_spike_exit_code == 0) ? 3 : 2;
+    }
 
     // -------- decode RISC-V instruction fields --------
     uint32_t op        = insn & 0x7Fu;
@@ -306,24 +345,6 @@ extern "C" unsigned int spike_dpi_next(uint32_t *r) {
         uint64_t npc; unsigned nenc;
         if (sscanf(s_next_line, "core %*u: %*u 0x%lx (0x%x)", &npc, &nenc) == 2)
             pc_wdata_v = npc;
-    }
-
-    // -------- diagnostic: flag non-sequential PC transitions on non-branch instructions --------
-    {
-        uint64_t expected_seq = cur_pc + (comp ? 2u : 4u);
-        if (pc_wdata_v != expected_seq) {
-            s_nonseq_transitions++;
-            if (!comp) {
-                uint32_t op5_ = (insn >> 2) & 0x1Fu;
-                // branch=0x18, JALR=0x19, JAL=0x1B are expected non-sequential; anything else is suspicious
-                if (op5_ != 0x18u && op5_ != 0x19u && op5_ != 0x1Bu)
-                    fprintf(stderr, "[SPIKE_DPI] non-sequential for non-branch instr: "
-                            "pc=0x%lx (0x%x) -> 0x%lx (seq=0x%lx) -- likely interrupt/trap\n",
-                            (unsigned long)cur_pc, insn,
-                            (unsigned long)pc_wdata_v,
-                            (unsigned long)expected_seq);
-            }
-        }
     }
 
     // -------- fill 35-word WData array --------
