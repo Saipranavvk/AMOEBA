@@ -5,6 +5,9 @@
 #include <unistd.h>
 #include <sys/select.h>
 #include <sys/wait.h>
+#include <signal.h>
+#include <fcntl.h>
+#include <sys/types.h>
 
 // Shadow register files (committed state)
 static uint64_t s_iregs[32];
@@ -17,6 +20,7 @@ static int      s_pipe_dead;  // set when pipe is NULL or hits EOF without any c
 // Boot ROM lines (PC < s_prog_base) are skipped so Spike stays in sync with the DUT.
 static uint64_t s_prog_base;
 static int s_spike_exit_code = -1;  // Exit status of Spike process: 0=clean, 1=error, -1=unknown
+static pid_t s_spike_pid = -1;  // Spike process ID for kill/waitpid
 
 // WData helpers: 35-word array, word[0]=LSB field (mem_wdata[31:0]), word[34]=MSB field (inst)
 static inline void w64(uint32_t *r, int lo, uint64_t v) {
@@ -68,34 +72,56 @@ extern "C" void spike_dpi_init(const char *mem_space, const char *elf_file) {
     snprintf(cmd, sizeof(cmd),
         "%s --isa=rv64gc_zicsr_zifencei %s --log-commits \"%s\" </dev/null 2>&1",
         spike_bin, mem_space, elf_file);
-    s_pipe = popen(cmd, "r");
+
+    int pipefd[2];
+    pipe(pipefd);
+    s_spike_pid = fork();
+    if (s_spike_pid == 0) {
+        int null_fd = open("/dev/null", O_RDONLY);
+        if (null_fd >= 0) { dup2(null_fd, STDIN_FILENO); close(null_fd); }
+        dup2(pipefd[1], STDOUT_FILENO);
+        dup2(pipefd[1], STDERR_FILENO);
+        close(pipefd[0]); close(pipefd[1]);
+        execl("/bin/sh", "sh", "-c", cmd, (char*)NULL);
+        _exit(1);
+    }
+    close(pipefd[1]);
+    s_pipe = fdopen(pipefd[0], "r");
 }
 
 extern "C" unsigned int spike_dpi_fin() {
     if (s_pipe) {
-        // Drain any unread output so Spike isn't blocked writing when pclose() waits.
-        // Use select() with a 1-second timeout to avoid hanging if Spike is stuck.
+        // Drain with select timeout.
         int fd = fileno(s_pipe);
         char drain[4096];
-        struct timeval tv;
-        tv.tv_sec = 1;
-        tv.tv_usec = 0;
-
-        for (int attempts = 0; attempts < 10; ++attempts) {
-            fd_set readfds;
-            FD_ZERO(&readfds);
-            FD_SET(fd, &readfds);
-            struct timeval tv_copy = tv;
-            int select_ret = select(fd + 1, &readfds, NULL, NULL, &tv_copy);
-            if (select_ret <= 0) break;  // Timeout or error; stop draining
-            if (!FD_ISSET(fd, &readfds)) break;
-            size_t n = fread(drain, 1, sizeof(drain), s_pipe);
-            if (n == 0) break;  // EOF
+        for (int i = 0; i < 10; ++i) {
+            fd_set rfds; FD_ZERO(&rfds); FD_SET(fd, &rfds);
+            struct timeval tv = {1, 0};
+            if (select(fd + 1, &rfds, NULL, NULL, &tv) <= 0) break;
+            if (!FD_ISSET(fd, &rfds)) break;
+            if (fread(drain, 1, sizeof(drain), s_pipe) == 0) break;
         }
-        int status = pclose(s_pipe);
+        fclose(s_pipe);
         s_pipe = NULL;
-        if (s_spike_exit_code == -1)
-            s_spike_exit_code = (WIFEXITED(status) && WEXITSTATUS(status) == 0) ? 0 : 1;
+    }
+    // Force-terminate Spike if still running.
+    if (s_spike_pid > 0) {
+        kill(s_spike_pid, SIGTERM);
+        for (int i = 0; i < 20; ++i) {
+            usleep(100000);  // 100 ms
+            int st;
+            if (waitpid(s_spike_pid, &st, WNOHANG) == s_spike_pid) {
+                if (s_spike_exit_code == -1)
+                    s_spike_exit_code = (WIFEXITED(st) && WEXITSTATUS(st) == 0) ? 0 : 1;
+                s_spike_pid = -1;
+                break;
+            }
+        }
+        if (s_spike_pid > 0) {
+            kill(s_spike_pid, SIGKILL);
+            waitpid(s_spike_pid, NULL, 0);
+            s_spike_pid = -1;
+        }
     }
     return 0;
 }
@@ -121,7 +147,7 @@ extern "C" void spike_dpi_set_ireg(uint32_t reg, uint64_t val) {
 //   [33]=trapped  [34]=inst
 extern "C" unsigned int spike_dpi_next(uint32_t *r) {
     memset(r, 0, 35 * sizeof(uint32_t));
-    if (s_pipe_dead) return 2;  // spike not running; caller should $fatal
+    if (s_pipe_dead) return (s_spike_exit_code == 0) ? 3 : 2;
 
     char     line[512];
     uint64_t cur_pc   = 0;
@@ -141,10 +167,23 @@ extern "C" unsigned int spike_dpi_next(uint32_t *r) {
             memcpy(line, s_next_line, sizeof(line));
             s_has_next = 0;
         } else {
+            // Wait up to 60s for Spike to produce a line.
+            int fd = fileno(s_pipe);
+            fd_set rfds; FD_ZERO(&rfds); FD_SET(fd, &rfds);
+            struct timeval tv = {60, 0};
+            if (select(fd + 1, &rfds, NULL, NULL, &tv) <= 0) {
+                fprintf(stderr, "[SPIKE_DPI] Spike did not respond within 60s — killing\n");
+                if (s_spike_pid > 0) { kill(s_spike_pid, SIGKILL); waitpid(s_spike_pid, NULL, 0); s_spike_pid = -1; }
+                fclose(s_pipe); s_pipe = NULL; s_pipe_dead = 1;
+                s_spike_exit_code = 1;  // treat as error
+                if (!got_insn) return 2;
+                break;
+            }
             if (!fgets(line, sizeof(line), s_pipe)) {
-                // EOF: capture Spike's exit status
-                int status = pclose(s_pipe);
-                s_pipe = NULL;
+                // EOF — Spike exited; collect exit status
+                int status = 0;
+                if (s_spike_pid > 0) { waitpid(s_spike_pid, &status, 0); s_spike_pid = -1; }
+                fclose(s_pipe); s_pipe = NULL; s_pipe_dead = 1;
                 s_spike_exit_code = (WIFEXITED(status) && WEXITSTATUS(status) == 0) ? 0 : 1;
                 break;
             }

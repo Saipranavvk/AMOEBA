@@ -120,12 +120,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/spike-install
-          key: spike-commitlog-${{ runner.os }}-v1
+          key: spike-commitlog-${{ runner.os }}-v1.1.0
 
       - name: Build Spike from source
         if: steps.cache-spike.outputs.cache-hit != 'true'
         run: |
-          git clone --depth=1 https://github.com/riscv-software-src/riscv-isa-sim.git /tmp/spike-src
+          git clone --depth=1 https://github.com/riscv-software-src/riscv-isa-sim.git --branch v1.1.0 /tmp/spike-src
           mkdir /tmp/spike-src/build
           cd /tmp/spike-src/build
           ../configure --enable-commitlog --prefix=/tmp/spike-install
