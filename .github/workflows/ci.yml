@@ -101,11 +101,41 @@ jobs:
           path: sim/verilator/build_freertos
           key: freertos-build-${{ runner.os }}-${{ github.sha }}
 
+  # ── Build Spike executable (shared for baremetal tests) ────────────────────
+  ci-build-spike-exe:
+    name: Build Spike
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y autoconf flex bison libfl-dev help2man zlib1g-dev
+          pip3 install --quiet pyyaml
+
+      - name: Cache Spike executable
+        id: cache-spike
+        uses: actions/cache@v4
+        with:
+          path: /tmp/spike-install
+          key: spike-commitlog-${{ runner.os }}-v1
+
+      - name: Build Spike from source
+        if: steps.cache-spike.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth=1 https://github.com/riscv-software-src/riscv-isa-sim.git /tmp/spike-src
+          mkdir /tmp/spike-src/build
+          cd /tmp/spike-src/build
+          ../configure --enable-commitlog --prefix=/tmp/spike-install
+          make -j$(nproc)
+          make install
+
   # ── Baremetal regression: run tests with cached Spike DPI simulator ────────
   ci-baremetal:
     name: Baremetal - ${{ matrix.test }}
     runs-on: ubuntu-latest
-    needs: [ci-build-spike, ci-build-no-spike]
+    needs: [ci-build-spike, ci-build-no-spike, ci-build-spike-exe]
     strategy:
       matrix:
         test: [basic_arith, exit_test, sorting_algo]
@@ -125,22 +155,12 @@ jobs:
       - name: Build spike.so
         run: g++ -shared -fPIC -O2 hvl/common/spike_dpi.cpp -o hvl/common/spike.so
 
-      - name: Cache Spike executable
-        id: cache-spike
+      - name: Restore Spike executable cache
         uses: actions/cache@v4
         with:
           path: /tmp/spike-install
           key: spike-commitlog-${{ runner.os }}-v1
-
-      - name: Build Spike from source
-        if: steps.cache-spike.outputs.cache-hit != 'true'
-        run: |
-          git clone --depth=1 https://github.com/riscv-software-src/riscv-isa-sim.git /tmp/spike-src
-          mkdir /tmp/spike-src/build
-          cd /tmp/spike-src/build
-          ../configure --enable-commitlog --prefix=/tmp/spike-install
-          make -j$(nproc)
-          make install
+          fail-on-cache-miss: true
 
       - name: Add Spike to PATH
         run: echo "/tmp/spike-install/bin" >> $GITHUB_PATH
