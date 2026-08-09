@@ -141,7 +141,7 @@ jobs:
     needs: [ci-build-spike, ci-build-no-spike, ci-build-spike-exe]
     strategy:
       matrix:
-        test: [exit_test] # [basic_arith, exit_test, sorting_algo]
+        test: [basic_arith, exit_test, sorting_algo]
     steps:
       - uses: actions/checkout@v4
         with:
