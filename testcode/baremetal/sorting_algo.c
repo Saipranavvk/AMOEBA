@@ -81,7 +81,7 @@ void quickSortIterative(int a[], int n)
 }
 
 /* --------------------------------------------------------------
-   Example driver – large data set (1 M elements)
+   Example driver – large data set (1M elements)
    -------------------------------------------------------------- */
 int main(void)
 {

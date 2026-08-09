@@ -28,7 +28,43 @@ COMMON_FLAGS = +incdir+$(CURDIR)/../hvl/common $(CVW_INCDIRS) $(ECE411_NO_FLOAT)
 VCS_FLAGS    = $(COMMON_FLAGS) +incdir+$(CURDIR)/../hvl/vcs -licqueue -full64 -lca -sverilog -timescale=1ps/1ps -debug_acc+all -kdb -suppress=LCA_FEATURES_ENABLED -msg_config=../vcs_warn.config -xprop=../xprop.config -xprop=flowctrl -assert svaext
 # VER_FLAGS      = $(COMMON_FLAGS) +incdir+$(CURDIR)/../hvl/verilator -Wall --timescale 1ps/1ps -Mdir build -O3 -CFLAGS "-Ofast -march=native" --x-assign fast --x-initial fast --noassert --cc --exe ../verilator_warn.vlt --trace-fst --trace-structs --trace-max-array 1048576 --trace-max-width 1048576 +define+ECE411_VERILATOR --threads 5
 VER_FLAGS 	   = $(COMMON_FLAGS) +incdir+$(CURDIR)/../hvl/verilator -Wall --timescale 1ps/1ps -Mdir build -O3 --output-split 20000 --output-split-cfuncs 200 -CFLAGS "-O3 -march=native -flto -DNDEBUG" -LDFLAGS "-flto" --x-assign fast --x-initial fast --trace-fst --trace-structs --cc --exe ../verilator_warn.vlt +define+ECE411_VERILATOR --threads $(shell nproc)
+FREERTOS_VER_FLAGS = $(COMMON_FLAGS) +define+ECE411_NO_SPIKE_DPI +incdir+$(CURDIR)/../hvl/verilator -Wall --timescale 1ps/1ps -Mdir build_freertos -O3 --output-split 20000 --output-split-cfuncs 200 -CFLAGS "-O3 -march=native -flto -DNDEBUG" -LDFLAGS "-flto" --x-assign fast --x-initial fast --trace-fst --trace-structs --cc --exe ../verilator_warn.vlt +define+ECE411_VERILATOR --threads $(shell nproc)
 
+
+verilator/build_freertos/Vtop_tb: $(VER_SRCS) $(HDRS)
+	mkdir -p verilator/build_freertos
+	python3 check_sus.py
+	python3 ../bin/rvfi_reference.py 1 $(ECE411_NO_FLOAT)
+	cd verilator ;\
+	PERL5LIB="$(CURDIR)/perl5:$${PERL5LIB}" verilator $(FREERTOS_VER_FLAGS) $(VER_SRCS) --top-module top_tb |& tee build_freertos/compile.log
+	cd verilator/build_freertos ;\
+	$(MAKE) --jobs=$(shell echo $(shell nproc)-2 | bc) -f Vtop_tb.mk |& tee -a compile.log
+
+.PHONY: run_verilator_top_tb_freertos
+run_verilator_top_tb_freertos: verilator/build_freertos/Vtop_tb $(PROG)
+	mkdir -p verilator/$(PROG_NAME)
+	find ./verilator -maxdepth 1 -type f -delete
+	python3 ../bin/generate_memory_file.py -8 $(PROG)
+	python3 $(CURDIR)/../bin/get_options.py clock
+	python3 $(CURDIR)/../bin/get_options.py bmem_x
+	cd verilator && ./build_freertos/Vtop_tb \
+		+TIMEOUT_ECE411=$(TIMEOUT) \
+		+WALL_TIMEOUT_SEC_ECE411=$(WALL_TIMEOUT) \
+		+CLOCK_PERIOD_PS_ECE411=$(shell python3 $(CURDIR)/../bin/get_options.py clock) \
+		+BRAM_0_ON_X_ECE411=$(shell python3 $(CURDIR)/../bin/get_options.py bmem_x) \
+		+MEMLST_ECE411="$(CURDIR)/bin/memory_8.lst" \
+		+ELF_ECE411="$(CURDIR)/bin/spike_dpi.elf" \
+		|& tee $(PROG_NAME)/simulation.log
+	-cp verilator/dump.fst verilator/$(PROG_NAME)/dump.fst 2>/dev/null
+
+.PHONY: build_freertos
+build_freertos: verilator/build_freertos/Vtop_tb
+	@echo "FreeRTOS simulation built with ECE411_NO_SPIKE_DPI flag"
+
+.PHONY: freertos
+freertos: verilator/build_freertos/Vtop_tb
+	$(MAKE) -C $(CURDIR)/../testcode/freertos build
+	$(MAKE) run_verilator_top_tb_freertos PROG=$(CURDIR)/../testcode/freertos/freertos_wally.elf
 
 vcs/top_tb: $(VCS_SRCS) $(HDRS)
 	mkdir -p vcs

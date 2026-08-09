@@ -7,9 +7,9 @@ on:
     branches: [main]
 
 jobs:
-  # ── Fast tier: check-generated + Verilator compile only (no Spike needed) ───
-  ci-fast:
-    name: Check Generated + Compile
+  # ── Build with Spike DPI ────────────────────────────────────────────────────
+  ci-build-spike:
+    name: Build (Spike DPI)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,14 +48,64 @@ jobs:
       - name: Check generated files are up to date
         run: make -C sim check-generated
 
-      - name: Compile (Verilator)
+      - name: Compile (Spike DPI)
         run: make -C sim verilator/build/Vtop_tb
 
-  # ── Baremetal regression: needs RISC-V toolchain + Spike executable ─────────
+      - name: Cache Spike DPI build
+        uses: actions/cache@v4
+        with:
+          path: sim/verilator/build
+          key: spike-build-${{ runner.os }}-${{ github.sha }}
+
+  # ── Build without Spike DPI (for FreeRTOS) ──────────────────────────────────
+  ci-build-no-spike:
+    name: Build (No Spike DPI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3 python3-pip gcc g++ make \
+            autoconf flex bison libfl-dev help2man zlib1g-dev
+          pip3 install --quiet pyyaml
+
+      - name: Cache Verilator v5.026
+        id: cache-verilator
+        uses: actions/cache@v4
+        with:
+          path: /opt/verilator
+          key: verilator-5.026-${{ runner.os }}
+
+      - name: Build Verilator v5.026 from source
+        if: steps.cache-verilator.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/verilator/verilator --branch v5.026 --depth=1 /tmp/verilator-src
+          cd /tmp/verilator-src && autoconf
+          ./configure --prefix=/opt/verilator
+          make -j$(nproc)
+          make install
+
+      - name: Add Verilator to PATH
+        run: echo "/opt/verilator/bin" >> $GITHUB_PATH
+
+      - name: Compile (No Spike DPI)
+        run: make -C sim build_freertos
+
+      - name: Cache FreeRTOS build
+        uses: actions/cache@v4
+        with:
+          path: sim/verilator/build_freertos
+          key: freertos-build-${{ runner.os }}-${{ github.sha }}
+
+  # ── Baremetal regression: run tests with cached Spike DPI simulator ────────
   ci-baremetal:
     name: Baremetal - ${{ matrix.test }}
     runs-on: ubuntu-latest
-    needs: ci-fast
+    needs: [ci-build-spike, ci-build-no-spike]
     strategy:
       matrix:
         test: [basic_arith, exit_test, sorting_algo]
@@ -75,26 +125,7 @@ jobs:
       - name: Build spike.so
         run: g++ -shared -fPIC -O2 hvl/common/spike_dpi.cpp -o hvl/common/spike.so
 
-      - name: Cache Verilator v5.026
-        id: cache-verilator
-        uses: actions/cache@v4
-        with:
-          path: /opt/verilator
-          key: verilator-5.026-${{ runner.os }}
-
-      - name: Build Verilator v5.026 from source
-        if: steps.cache-verilator.outputs.cache-hit != 'true'
-        run: |
-          git clone https://github.com/verilator/verilator --branch v5.026 --depth=1 /tmp/verilator-src
-          cd /tmp/verilator-src && autoconf
-          ./configure --prefix=/opt/verilator
-          make -j$(nproc)
-          make install
-
-      - name: Add Verilator to PATH
-        run: echo "/opt/verilator/bin" >> $GITHUB_PATH
-
-      - name: Cache Spike
+      - name: Cache Spike executable
         id: cache-spike
         uses: actions/cache@v4
         with:
@@ -114,15 +145,19 @@ jobs:
       - name: Add Spike to PATH
         run: echo "/tmp/spike-install/bin" >> $GITHUB_PATH
 
-      - name: Compile simulator
-        run: make -C sim verilator/build/Vtop_tb
+      - name: Restore Spike DPI build cache
+        uses: actions/cache@v4
+        with:
+          path: sim/verilator/build
+          key: spike-build-${{ runner.os }}-${{ github.sha }}
+          fail-on-cache-miss: true
 
       - name: Run baremetal test
         run: make -C sim run_verilator_top_tb PROG=../testcode/baremetal/${{ matrix.test }}.c
 
-  # ── FreeRTOS: needs RISC-V toolchain + FreeRTOS-Kernel; no Spike needed ─────
+  # ── FreeRTOS: run with cached no-spike simulator ────────────────────────────
   ci-freertos:
-    name: FreeRTOS Sorting Algo Test
+    name: FreeRTOS Test
     runs-on: ubuntu-latest
     needs: ci-baremetal
     steps:
@@ -138,27 +173,15 @@ jobs:
             gcc-riscv64-unknown-elf
           pip3 install --quiet pyyaml
 
-      - name: Cache Verilator v5.026
-        id: cache-verilator
-        uses: actions/cache@v4
-        with:
-          path: /opt/verilator
-          key: verilator-5.026-${{ runner.os }}
-
-      - name: Build Verilator v5.026 from source
-        if: steps.cache-verilator.outputs.cache-hit != 'true'
-        run: |
-          git clone https://github.com/verilator/verilator --branch v5.026 --depth=1 /tmp/verilator-src
-          cd /tmp/verilator-src && autoconf
-          ./configure --prefix=/opt/verilator
-          make -j$(nproc)
-          make install
-
-      - name: Add Verilator to PATH
-        run: echo "/opt/verilator/bin" >> $GITHUB_PATH
-
       - name: Clone FreeRTOS-Kernel
         run: git clone --depth=1 https://github.com/FreeRTOS/FreeRTOS-Kernel.git ~/FreeRTOS-Kernel
 
-      - name: Build and run FreeRTOS test
-        run: make -C testcode/freertos
+      - name: Restore FreeRTOS build cache
+        uses: actions/cache@v4
+        with:
+          path: sim/verilator/build_freertos
+          key: freertos-build-${{ runner.os }}-${{ github.sha }}
+          fail-on-cache-miss: true
+
+      - name: Run FreeRTOS test
+        run: make -C sim freertos
