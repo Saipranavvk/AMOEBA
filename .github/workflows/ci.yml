@@ -49,7 +49,7 @@ jobs:
         run: make -C sim check-generated
 
       - name: Compile (Spike DPI)
-        run: make -C sim verilator/build/Vtop_tb
+        run: PATH=/opt/verilator/bin:$PATH make -C sim verilator/build/Vtop_tb
 
       - name: Cache Spike DPI build
         uses: actions/cache@v4
@@ -93,7 +93,7 @@ jobs:
         run: echo "/opt/verilator/bin" >> $GITHUB_PATH
 
       - name: Compile (No Spike DPI)
-        run: make -C sim build_freertos
+        run: PATH=/opt/verilator/bin:$PATH make -C sim build_freertos
 
       - name: Cache FreeRTOS build
         uses: actions/cache@v4
@@ -145,6 +145,16 @@ jobs:
       - name: Add Spike to PATH
         run: echo "/tmp/spike-install/bin" >> $GITHUB_PATH
 
+      - name: Restore Verilator cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/verilator
+          key: verilator-5.026-${{ runner.os }}
+          fail-on-cache-miss: true
+
+      - name: Add Verilator to PATH
+        run: echo "/opt/verilator/bin" >> $GITHUB_PATH
+
       - name: Restore Spike DPI build cache
         uses: actions/cache@v4
         with:
@@ -153,7 +163,7 @@ jobs:
           fail-on-cache-miss: true
 
       - name: Run baremetal test
-        run: make -C sim run_verilator_top_tb PROG=../testcode/baremetal/${{ matrix.test }}.c
+        run: PATH=/opt/verilator/bin:$PATH make -C sim run_verilator_top_tb PROG=../testcode/baremetal/${{ matrix.test }}.c
 
   # ── FreeRTOS: run with cached no-spike simulator ────────────────────────────
   ci-freertos:
@@ -176,6 +186,16 @@ jobs:
       - name: Clone FreeRTOS-Kernel
         run: git clone --depth=1 https://github.com/FreeRTOS/FreeRTOS-Kernel.git ~/FreeRTOS-Kernel
 
+      - name: Restore Verilator cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/verilator
+          key: verilator-5.026-${{ runner.os }}
+          fail-on-cache-miss: true
+
+      - name: Add Verilator to PATH
+        run: echo "/opt/verilator/bin" >> $GITHUB_PATH
+
       - name: Restore FreeRTOS build cache
         uses: actions/cache@v4
         with:
@@ -184,4 +204,4 @@ jobs:
           fail-on-cache-miss: true
 
       - name: Run FreeRTOS test
-        run: make -C sim freertos
+        run: PATH=/opt/verilator/bin:$PATH make -C sim freertos
