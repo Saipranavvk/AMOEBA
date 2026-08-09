@@ -85,7 +85,7 @@ void quickSortIterative(int a[], int n)
    -------------------------------------------------------------- */
 int main(void)
 {
-    const int N = 1024;
+    const int N = 100;
     int data[N];
     int i;
     unsigned int seed = 123456789u;
