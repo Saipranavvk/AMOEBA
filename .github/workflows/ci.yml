@@ -126,6 +126,8 @@ jobs:
         if: steps.cache-spike.outputs.cache-hit != 'true'
         run: |
           git clone --depth=1 https://github.com/riscv-software-src/riscv-isa-sim.git --branch v1.1.0 /tmp/spike-src
+          # Fix missing <cstdint> include in v1.1.0
+          sed -i '9i #include <cstdint>' /tmp/spike-src/fesvr/device.h
           mkdir /tmp/spike-src/build
           cd /tmp/spike-src/build
           ../configure --enable-commitlog --prefix=/tmp/spike-install
