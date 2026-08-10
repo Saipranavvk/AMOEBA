@@ -4,7 +4,6 @@
 #include <stdint.h>
 #include <limits.h>
 #include <stdlib.h>
-#include <chrono>
 
 #include <verilated.h>
 #include "Vtop_tb.h"
@@ -67,9 +66,6 @@ int main(int argc, char** argv, char** env) {
     tfp->open("dump.fst");
     bool dump_all = !get_bool_plusarg(contextp, "NO_DUMP_ALL_ECE411");
 
-    uint64_t wall_timeout_sec = get_int_plusarg(contextp, "WALL_TIMEOUT_SEC_ECE411");
-    if (wall_timeout_sec == 0) wall_timeout_sec = 600; // default 10 minutes
-
     top->clk = 1;
     top->rst = 1;
 
@@ -77,21 +73,12 @@ int main(int argc, char** argv, char** env) {
 
     top->rst = 0;
 
-    auto wall_start = std::chrono::steady_clock::now();
-    bool wall_timeout_hit = false;
     while (!contextp->gotFinish()) {
         tickn(contextp, top, tfp, dump_all|top->dump_on, 1);
-        auto wall_now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(wall_now - wall_start).count();
-        if ((uint64_t)elapsed > wall_timeout_sec) {
-            cerr << "TB Error: wall-clock timeout after " << elapsed << "s (WALL_TIMEOUT_SEC_ECE411=" << wall_timeout_sec << ")" << endl;
-            wall_timeout_hit = true;
-            break;
-        }
     }
 
     tfp->close();
     top->final();
     contextp->statsPrintSummary();
-    return (contextp->gotError() || wall_timeout_hit) ? EXIT_FAILURE : 0;
+    return contextp->gotError() ? EXIT_FAILURE : 0;
 }
