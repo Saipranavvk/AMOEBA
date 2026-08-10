@@ -138,7 +138,7 @@ REGRESSION_TESTS ?= $(shell find $(CURDIR)/../testcode/baremetal -name '*.c')
 
 RISCV_FORMAL_MONITOR_DIR = $(CURDIR)/../third_party/riscv-formal/monitor
 RISCV_FORMAL_MONITOR     = $(RISCV_FORMAL_MONITOR_DIR)/generate.py
-RVFIMON_ISA          ?= rv64imac
+RVFIMON_ISA          ?= rv64imafdc_zb
 
 .PHONY: generate-rtl
 generate-rtl:

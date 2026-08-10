@@ -420,11 +420,13 @@ module monitor #(
         logic        mmio_branch_pending;
         logic        uart_poll_skip;
         logic [63:0] uart_spike_resume_pc;
+        logic        uart_resync_pending;
         initial begin
             mmio_load_follow_pending = 1'b0;
             mmio_branch_pending      = 1'b0;
             uart_poll_skip           = 1'b0;
             uart_spike_resume_pc     = 64'd0;
+            uart_resync_pending      = 1'b0;
         end
 
         // Cascade suppression: a DRAM load may return a value previously tainted by an
@@ -467,7 +469,36 @@ module monitor #(
                 automatic int unsigned retval;
                 sp = s.pop_back();
                 channel = sp.channel;
-                if (mmio_resync_pending && itf.pc_rdata[channel] == mmio_resync_target_pc) begin
+                if (uart_resync_pending && itf.pc_rdata[channel] == mmio_resync_target_pc) begin
+                    // Spike logged the UART store; consume it from s_next_line to get the
+                    // true lookahead PC (instruction after sb), then override all fields
+                    // with DUT data while keeping Spike's pc_wdata.
+                    retval = spike_dpi_next(spike_dpi_rvfi_itf);
+                    spike_dpi_rvfi_itf.inst       = itf.inst[channel];
+                    spike_dpi_rvfi_itf.trapped    = '0;
+                    spike_dpi_rvfi_itf.rs1_addr   = '0;
+                    spike_dpi_rvfi_itf.rs2_addr   = '0;
+                    spike_dpi_rvfi_itf.rs1_rdata  = '0;
+                    spike_dpi_rvfi_itf.rs2_rdata  = '0;
+                    spike_dpi_rvfi_itf.rd_addr    = itf.rd_addr[channel];
+                    spike_dpi_rvfi_itf.rd_wdata   = itf.rd_wdata[channel];
+                    spike_dpi_rvfi_itf.frs1_addr  = '0;
+                    spike_dpi_rvfi_itf.frs2_addr  = '0;
+                    spike_dpi_rvfi_itf.frs3_addr  = '0;
+                    spike_dpi_rvfi_itf.frs1_rdata = '0;
+                    spike_dpi_rvfi_itf.frs2_rdata = '0;
+                    spike_dpi_rvfi_itf.frs3_rdata = '0;
+                    spike_dpi_rvfi_itf.frd_addr   = '0;
+                    spike_dpi_rvfi_itf.frd_wdata  = '0;
+                    spike_dpi_rvfi_itf.pc_rdata   = itf.pc_rdata[channel];
+                    // pc_wdata kept from Spike (correct lookahead past the UART store)
+                    spike_dpi_rvfi_itf.mem_addr   = {itf.mem_addr[channel][63:3], 3'b000};
+                    spike_dpi_rvfi_itf.mem_rmask  = {24'd0, itf.mem_rmask[channel]};
+                    spike_dpi_rvfi_itf.mem_wmask  = {24'd0, itf.mem_wmask[channel]};
+                    spike_dpi_rvfi_itf.mem_rdata  = itf.mem_rdata[channel];
+                    spike_dpi_rvfi_itf.mem_wdata  = itf.mem_wdata[channel];
+                    uart_resync_pending <= 1'b0;
+                end else if (mmio_resync_pending && itf.pc_rdata[channel] == mmio_resync_target_pc) begin
                     // Spike silently committed this MMIO device store without logging it.
                     // Synthesize a perfectly-matching response from DUT's RVFI so that
                     // spike_dpi_next's saved lookahead (mmio_resync_lookahead_pc) becomes
@@ -513,10 +544,9 @@ module monitor #(
                             $display("[UART POLL EXIT] order %0d pc=%h: DUT exiting UART TX poll loop; arming store resync sb@%h resume@%h",
                                 itf.order[channel], itf.pc_rdata[channel],
                                 pc_poll_seq, uart_spike_resume_pc);
-                            uart_poll_skip           <= 1'b0;
-                            mmio_resync_pending      <= 1'b1;
-                            mmio_resync_target_pc    <= pc_poll_seq;
-                            mmio_resync_lookahead_pc <= uart_spike_resume_pc;
+                            uart_poll_skip        <= 1'b0;
+                            uart_resync_pending   <= 1'b1;
+                            mmio_resync_target_pc <= pc_poll_seq;
                         end
                     end
                     spike_dpi_rvfi_itf.inst       = itf.inst      [channel];
@@ -852,7 +882,7 @@ module monitor #(
 
         logic [15:0] errcode;
 
-        riscv_formal_monitor_rv64imac monitor(
+        riscv_formal_monitor_rv64imafdc_zb monitor(
             .clock              (itf.clk),
             .reset              (itf.rst),
             .rvfi_valid         (rvfi_valid),

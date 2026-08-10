@@ -70,7 +70,7 @@ extern "C" void spike_dpi_init(const char *mem_space, const char *elf_file) {
 
     char cmd[2048];
     snprintf(cmd, sizeof(cmd),
-        "%s --isa=rv64gc_zicsr_zifencei %s --log-commits \"%s\" </dev/null 2>&1",
+        "%s --isa=rv64gc_zba_zbb_zbc_zbs_zbkb_zbkc_zbkx_zicsr_zifencei %s --log-commits \"%s\" </dev/null 2>&1",
         spike_bin, mem_space, elf_file);
 
     int pipefd[2];

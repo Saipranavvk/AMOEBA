@@ -101,6 +101,21 @@ jobs:
           path: sim/verilator/build_freertos
           key: freertos-build-${{ runner.os }}-${{ github.sha }}
 
+  # ── Discover all baremetal tests ────────────────────────────────────────────
+  ci-discover-tests:
+    name: Discover Baremetal Tests
+    runs-on: ubuntu-latest
+    outputs:
+      tests: ${{ steps.discover.outputs.tests }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Discover baremetal tests
+        id: discover
+        run: |
+          TESTS=$(find testcode/baremetal -name "*.c" -type f | sed 's|testcode/baremetal/||g' | sed 's|\.c$||g' | jq -R -s -c 'split("\n")[:-1]')
+          echo "tests=${TESTS}" >> $GITHUB_OUTPUT
+
   # ── Build Spike executable (shared for baremetal tests) ────────────────────
   ci-build-spike-exe:
     name: Build Spike
@@ -138,10 +153,10 @@ jobs:
   ci-baremetal:
     name: Baremetal - ${{ matrix.test }}
     runs-on: ubuntu-latest
-    needs: [ci-build-spike, ci-build-no-spike, ci-build-spike-exe]
+    needs: [ci-discover-tests, ci-build-spike, ci-build-no-spike, ci-build-spike-exe]
     strategy:
       matrix:
-        test: [basic_arith, exit_test, sorting_algo]
+        test: ${{ fromJson(needs.ci-discover-tests.outputs.tests) }}
     steps:
       - uses: actions/checkout@v4
         with:
