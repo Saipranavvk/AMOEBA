@@ -149,4 +149,13 @@ for a in addressability:
                     f.write("".join(reversed([temp_string[i:i+2] for i in range(0, len(temp_string), 2)])).zfill(2*a) + '\n')
                 f.write('\n')
             os.remove(temp_bin_file)
+        # Initialize UART LSR (offset 5 from UART base 0x10000000) with THRE=1 (0x20).
+        # simple_memory_w_mask returns 0 for uninitialized MMIO space, causing DUT to spin
+        # 130+ times per character.  Seeding byte 5 of the UART word lets DUT exit on the
+        # first poll so tests finish in a reasonable wall-clock time.
+        if a == 8:
+            uart_word_addr = 0x10000000 >> 3  # word index for byte address 0x10000000
+            # 64-bit little-endian word: byte 5 = 0x20, rest 0x00 → stored big-endian in file
+            f.write(f"@{uart_word_addr:08x}\n")
+            f.write("0000200000000000\n\n")
     print(f"[INFO]  Wrote memory contents to {fname}")
