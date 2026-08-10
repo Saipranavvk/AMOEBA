@@ -27,6 +27,8 @@ if sys.argv[1] == "arch":
             retval += "_zicsr"
         if j.get("zifencei", False):
             retval += "_zifencei"
+        if j.get("zbkb", False):
+            retval += "_zbkb"
     else:
         retval = "rv32i"
         if j["f_ext"]:
