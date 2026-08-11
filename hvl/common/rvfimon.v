@@ -14683,7 +14683,7 @@ module riscv_formal_monitor_rv64imafdc_zb_insn_div (
 
   wire misa_ok = 1;
 
-  // DIV instruction — explicit signed wires prevent Verilog-2001 unsigned context in ternary
+  // DIV instruction
   wire signed [64-1:0] div_rs1_s = rvfi_rs1_rdata;
   wire signed [64-1:0] div_rs2_s = rvfi_rs2_rdata;
   wire signed [64-1:0] div_result_s = div_rs1_s / div_rs2_s;
@@ -14843,7 +14843,7 @@ module riscv_formal_monitor_rv64imafdc_zb_insn_divw (
 
   wire misa_ok = 1;
 
-  // DIVW instruction — explicit signed wires prevent Verilog-2001 unsigned context in ternary
+  // DIVW instruction
   wire signed [31:0] divw_rs1_s = rvfi_rs1_rdata[31:0];
   wire signed [31:0] divw_rs2_s = rvfi_rs2_rdata[31:0];
   wire signed [31:0] divw_result_s = divw_rs1_s / divw_rs2_s;
@@ -19261,7 +19261,7 @@ module riscv_formal_monitor_rv64imafdc_zb_insn_rem (
 
   wire misa_ok = 1;
 
-  // REM instruction — explicit signed wires prevent Verilog-2001 unsigned context in ternary
+  // REM instruction
   wire signed [64-1:0] rem_rs1_s = rvfi_rs1_rdata;
   wire signed [64-1:0] rem_rs2_s = rvfi_rs2_rdata;
   wire signed [64-1:0] rem_result_s = rem_rs1_s % rem_rs2_s;
@@ -19421,7 +19421,7 @@ module riscv_formal_monitor_rv64imafdc_zb_insn_remw (
 
   wire misa_ok = 1;
 
-  // REMW instruction — explicit signed wires prevent Verilog-2001 unsigned context in ternary
+  // REMW instruction
   wire signed [31:0] remw_rs1_s = rvfi_rs1_rdata[31:0];
   wire signed [31:0] remw_rs2_s = rvfi_rs2_rdata[31:0];
   wire signed [31:0] remw_result_s = remw_rs1_s % remw_rs2_s;
