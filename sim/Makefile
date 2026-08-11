@@ -27,7 +27,7 @@ COMMON_FLAGS = +incdir+$(CURDIR)/../hvl/common $(CVW_INCDIRS) $(ECE411_NO_FLOAT)
 VCS_FLAGS    = $(COMMON_FLAGS) +incdir+$(CURDIR)/../hvl/vcs -licqueue -full64 -lca -sverilog -timescale=1ps/1ps -debug_acc+all -kdb -suppress=LCA_FEATURES_ENABLED -msg_config=../vcs_warn.config -xprop=../xprop.config -xprop=flowctrl -assert svaext
 # VER_FLAGS      = $(COMMON_FLAGS) +incdir+$(CURDIR)/../hvl/verilator -Wall --timescale 1ps/1ps -Mdir build -O3 -CFLAGS "-Ofast -march=native" --x-assign fast --x-initial fast --noassert --cc --exe ../verilator_warn.vlt --trace-fst --trace-structs --trace-max-array 1048576 --trace-max-width 1048576 +define+ECE411_VERILATOR --threads 5
 VER_FLAGS 	   = $(COMMON_FLAGS) +incdir+$(CURDIR)/../hvl/verilator -Wall --timescale 1ps/1ps -Mdir build -O3 --output-split 20000 --output-split-cfuncs 200 -CFLAGS "-O3 -flto -DNDEBUG" -LDFLAGS "-flto" --x-assign fast --x-initial fast --trace-fst --trace-structs --cc --exe ../verilator_warn.vlt +define+ECE411_VERILATOR --threads $(shell nproc)
-FREERTOS_VER_FLAGS = $(COMMON_FLAGS) +define+ECE411_NO_SPIKE_DPI +incdir+$(CURDIR)/../hvl/verilator -Wall --timescale 1ps/1ps -Mdir build_freertos -O3 --output-split 20000 --output-split-cfuncs 200 -CFLAGS "-O3 -flto -DNDEBUG" -LDFLAGS "-flto" --x-assign fast --x-initial fast --trace-fst --trace-structs --cc --exe ../verilator_warn.vlt +define+ECE411_VERILATOR --threads $(shell nproc)
+FREERTOS_VER_FLAGS = $(COMMON_FLAGS) +define+ECE411_NO_SPIKE_DPI +define+ECE411_NO_SPIKE_PRINTER +incdir+$(CURDIR)/../hvl/verilator -Wall --timescale 1ps/1ps -Mdir build_freertos -O3 --output-split 20000 --output-split-cfuncs 200 -CFLAGS "-O3 -flto -DNDEBUG" -LDFLAGS "-flto" --x-assign fast --x-initial fast --trace-fst --trace-structs --cc --exe ../verilator_warn.vlt +define+ECE411_VERILATOR --threads $(shell nproc)
 
 
 verilator/build_freertos/Vtop_tb: $(VER_SRCS) $(HDRS)
@@ -132,6 +132,7 @@ interactive_spike: $(ELF)
 	spike --isa=$(shell python3 $(CURDIR)/../bin/get_options.py arch) -m0x80000000:0x10000000 --log-commits -d $(ELF)
 
 REGRESSION_TESTS ?= $(shell find $(CURDIR)/../testcode/baremetal -name '*.c')
+ISA_LEVEL_TESTS  ?= $(shell find $(CURDIR)/../testcode/isa_level_testing -name '*.c' ! -name 'test_utils.h')
 
 RISCV_FORMAL_MONITOR_DIR = $(CURDIR)/../third_party/riscv-formal/monitor
 RISCV_FORMAL_MONITOR     = $(RISCV_FORMAL_MONITOR_DIR)/generate.py
@@ -156,8 +157,8 @@ check-generated:
 	rm -rf $$tmp; \
 	echo "Generated files are up to date."
 
-.PHONY: regression
-regression: verilator/build/Vtop_tb
+.PHONY: baremetal_regression
+baremetal_regression: verilator/build/Vtop_tb
 	@pass=0; fail=0; total=0; \
 	for test in $(REGRESSION_TESTS); do \
 		total=$$((total+1)); \
@@ -169,8 +170,45 @@ regression: verilator/build/Vtop_tb
 		fi; \
 	done; \
 	echo ""; \
-	echo "=== Regression Summary: $$pass/$$total tests passed ==="; \
+	echo "=== Baremetal Regression Summary: $$pass/$$total tests passed ==="; \
 	[ $$fail -eq 0 ] || exit 1
+
+.PHONY: run_isa_level
+run_isa_level: verilator/build_freertos/Vtop_tb $(PROG)
+	mkdir -p verilator/$(PROG_NAME)
+	find ./verilator -maxdepth 1 -type f -delete
+	python3 ../bin/generate_memory_file.py -8 $(PROG)
+	python3 $(CURDIR)/../bin/get_options.py clock
+	python3 $(CURDIR)/../bin/get_options.py bmem_x
+	cd verilator && ./build_freertos/Vtop_tb \
+		+TIMEOUT_ECE411=$(TIMEOUT) \
+		+CLOCK_PERIOD_PS_ECE411=$(shell python3 $(CURDIR)/../bin/get_options.py clock) \
+		+BRAM_0_ON_X_ECE411=$(shell python3 $(CURDIR)/../bin/get_options.py bmem_x) \
+		+MEMLST_ECE411="$(CURDIR)/bin/memory_8.lst" \
+		+ELF_ECE411="$(CURDIR)/bin/spike_dpi.elf" \
+		|& tee $(PROG_NAME)/simulation.log
+	-cp verilator/dump.fst verilator/$(PROG_NAME)/dump.fst 2>/dev/null
+
+.PHONY: isa_regression
+isa_regression: verilator/build_freertos/Vtop_tb
+	@pass=0; fail=0; total=0; \
+	for test in $(ISA_LEVEL_TESTS); do \
+		total=$$((total+1)); \
+		echo "=== [$$total] Running $$test ==="; \
+		if $(MAKE) -s run_isa_level PROG=$$test; then \
+			echo "  PASS: $$test"; pass=$$((pass+1)); \
+		else \
+			echo "  FAIL: $$test"; fail=$$((fail+1)); \
+		fi; \
+	done; \
+	echo ""; \
+	echo "=== ISA Regression Summary: $$pass/$$total tests passed ==="; \
+	[ $$fail -eq 0 ] || exit 1
+
+.PHONY: regression
+regression:
+	$(MAKE) baremetal_regression
+	$(MAKE) isa_regression
 
 .PHONY: clean
 clean:

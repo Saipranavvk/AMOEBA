@@ -206,5 +206,5 @@ int main(void) {
     tc_zbkb_instructions();
     tc_self_modifying_code();
     
-    return 0;
+    test_finish();
 }

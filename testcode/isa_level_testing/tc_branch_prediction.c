@@ -213,5 +213,5 @@ int main(void) {
     tc_alternating_branch();
     tc_call_return_pattern();
 
-    return 0;
+    test_finish();
 }

@@ -194,5 +194,5 @@ int main(void) {
     tc_compressed_control();
     tc_mixed_width_stream();
 
-    return 0;
+    test_finish();
 }

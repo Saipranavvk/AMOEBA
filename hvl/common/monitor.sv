@@ -349,6 +349,16 @@ module monitor #(
 
     `endif
 
+    // UART TX capture — always-on, works with or without Spike DPI
+    always @(posedge itf.clk iff !itf.rst) begin
+        for (int unsigned channel = 0; channel < CHANNELS; channel++) begin
+            if (itf.valid[channel] &&
+                itf.mem_wmask[channel][0] &&
+                {itf.mem_addr[channel][63:3], 3'b000} == 64'h10000000)
+                $write("%c", itf.mem_wdata[channel][7:0]);
+        end
+    end
+
     `ifndef ECE411_NO_SPIKE_DPI
 
         // NOTE: spike.so must be recompiled with uint64_t for wide fields when upgrading
@@ -413,22 +423,6 @@ module monitor #(
             mmio_resync_lookahead_pc = 64'd0;
         end
 
-        // Poll-loop resync: after an MMIO load diff, track the mask instruction and
-        // subsequent branch; suppress all divergence until DUT exits the poll loop
-        // and commits the UART write that Spike already consumed silently.
-        logic        mmio_load_follow_pending;
-        logic        mmio_branch_pending;
-        logic        uart_poll_skip;
-        logic [63:0] uart_spike_resume_pc;
-        logic        uart_resync_pending;
-        initial begin
-            mmio_load_follow_pending = 1'b0;
-            mmio_branch_pending      = 1'b0;
-            uart_poll_skip           = 1'b0;
-            uart_spike_resume_pc     = 64'd0;
-            uart_resync_pending      = 1'b0;
-        end
-
         // Cascade suppression: a DRAM load may return a value previously tainted by an
         // MMIO divergence (e.g. CLINT mtime written to printf arg stack, then loaded by
         // vprintfmt).  Track the tainted register so downstream arithmetic can be
@@ -469,36 +463,7 @@ module monitor #(
                 automatic int unsigned retval;
                 sp = s.pop_back();
                 channel = sp.channel;
-                if (uart_resync_pending && itf.pc_rdata[channel] == mmio_resync_target_pc) begin
-                    // Spike logged the UART store; consume it from s_next_line to get the
-                    // true lookahead PC (instruction after sb), then override all fields
-                    // with DUT data while keeping Spike's pc_wdata.
-                    retval = spike_dpi_next(spike_dpi_rvfi_itf);
-                    spike_dpi_rvfi_itf.inst       = itf.inst[channel];
-                    spike_dpi_rvfi_itf.trapped    = '0;
-                    spike_dpi_rvfi_itf.rs1_addr   = '0;
-                    spike_dpi_rvfi_itf.rs2_addr   = '0;
-                    spike_dpi_rvfi_itf.rs1_rdata  = '0;
-                    spike_dpi_rvfi_itf.rs2_rdata  = '0;
-                    spike_dpi_rvfi_itf.rd_addr    = itf.rd_addr[channel];
-                    spike_dpi_rvfi_itf.rd_wdata   = itf.rd_wdata[channel];
-                    spike_dpi_rvfi_itf.frs1_addr  = '0;
-                    spike_dpi_rvfi_itf.frs2_addr  = '0;
-                    spike_dpi_rvfi_itf.frs3_addr  = '0;
-                    spike_dpi_rvfi_itf.frs1_rdata = '0;
-                    spike_dpi_rvfi_itf.frs2_rdata = '0;
-                    spike_dpi_rvfi_itf.frs3_rdata = '0;
-                    spike_dpi_rvfi_itf.frd_addr   = '0;
-                    spike_dpi_rvfi_itf.frd_wdata  = '0;
-                    spike_dpi_rvfi_itf.pc_rdata   = itf.pc_rdata[channel];
-                    // pc_wdata kept from Spike (correct lookahead past the UART store)
-                    spike_dpi_rvfi_itf.mem_addr   = {itf.mem_addr[channel][63:3], 3'b000};
-                    spike_dpi_rvfi_itf.mem_rmask  = {24'd0, itf.mem_rmask[channel]};
-                    spike_dpi_rvfi_itf.mem_wmask  = {24'd0, itf.mem_wmask[channel]};
-                    spike_dpi_rvfi_itf.mem_rdata  = itf.mem_rdata[channel];
-                    spike_dpi_rvfi_itf.mem_wdata  = itf.mem_wdata[channel];
-                    uart_resync_pending <= 1'b0;
-                end else if (mmio_resync_pending && itf.pc_rdata[channel] == mmio_resync_target_pc) begin
+                if (mmio_resync_pending && itf.pc_rdata[channel] == mmio_resync_target_pc) begin
                     // Spike silently committed this MMIO device store without logging it.
                     // Synthesize a perfectly-matching response from DUT's RVFI so that
                     // spike_dpi_next's saved lookahead (mmio_resync_lookahead_pc) becomes
@@ -527,51 +492,6 @@ module monitor #(
                     spike_dpi_rvfi_itf.mem_rdata  = itf.mem_rdata[channel];
                     spike_dpi_rvfi_itf.mem_wdata  = itf.mem_wdata[channel];
                     mmio_resync_pending <= 1'b0;
-                    retval = 1;
-                end else if (uart_poll_skip) begin
-                    // DUT is still in the UART TX poll loop; Spike has already committed
-                    // and exited.  Synthesize all DUT instructions from DUT data without
-                    // advancing Spike's log pointer.  Keep shadow registers in sync so
-                    // comparison resumes cleanly after the poll exit.
-                    if (itf.rd_addr[channel] != '0)
-                        spike_dpi_set_ireg(itf.rd_addr[channel], itf.rd_wdata[channel]);
-                    begin
-                        automatic logic [63:0] pc_poll_seq;
-                        pc_poll_seq = itf.pc_rdata[channel]
-                                    + (itf.inst[channel][1:0] != 2'b11 ? 64'd2 : 64'd4);
-                        // rd_addr==0 (beqz/branch) AND sequential (not taken) → DUT exiting loop
-                        if (itf.rd_addr[channel] == '0 && itf.pc_wdata[channel] == pc_poll_seq) begin
-                            $display("[UART POLL EXIT] order %0d pc=%h: DUT exiting UART TX poll loop; arming store resync sb@%h resume@%h",
-                                itf.order[channel], itf.pc_rdata[channel],
-                                pc_poll_seq, uart_spike_resume_pc);
-                            uart_poll_skip        <= 1'b0;
-                            uart_resync_pending   <= 1'b1;
-                            mmio_resync_target_pc <= pc_poll_seq;
-                        end
-                    end
-                    spike_dpi_rvfi_itf.inst       = itf.inst      [channel];
-                    spike_dpi_rvfi_itf.trapped    = '0;
-                    spike_dpi_rvfi_itf.rs1_addr   = '0;
-                    spike_dpi_rvfi_itf.rs2_addr   = '0;
-                    spike_dpi_rvfi_itf.rs1_rdata  = '0;
-                    spike_dpi_rvfi_itf.rs2_rdata  = '0;
-                    spike_dpi_rvfi_itf.rd_addr    = itf.rd_addr   [channel];
-                    spike_dpi_rvfi_itf.rd_wdata   = itf.rd_wdata  [channel];
-                    spike_dpi_rvfi_itf.frs1_addr  = '0;
-                    spike_dpi_rvfi_itf.frs2_addr  = '0;
-                    spike_dpi_rvfi_itf.frs3_addr  = '0;
-                    spike_dpi_rvfi_itf.frs1_rdata = '0;
-                    spike_dpi_rvfi_itf.frs2_rdata = '0;
-                    spike_dpi_rvfi_itf.frs3_rdata = '0;
-                    spike_dpi_rvfi_itf.frd_addr   = '0;
-                    spike_dpi_rvfi_itf.frd_wdata  = '0;
-                    spike_dpi_rvfi_itf.pc_rdata   = itf.pc_rdata  [channel];
-                    spike_dpi_rvfi_itf.pc_wdata   = itf.pc_wdata  [channel];
-                    spike_dpi_rvfi_itf.mem_addr   = {itf.mem_addr[channel][63:3], 3'b000};
-                    spike_dpi_rvfi_itf.mem_rmask  = {24'd0, itf.mem_rmask[channel]};
-                    spike_dpi_rvfi_itf.mem_wmask  = {24'd0, itf.mem_wmask[channel]};
-                    spike_dpi_rvfi_itf.mem_rdata  = itf.mem_rdata [channel];
-                    spike_dpi_rvfi_itf.mem_wdata  = itf.mem_wdata [channel];
                     retval = 1;
                 end else if (loop_skip_active) begin
                     // Spike exited this iteration loop early (fewer iters due to tainted
@@ -689,7 +609,6 @@ module monitor #(
                             mmio_resync_pending      <= 1'b1;
                             mmio_resync_target_pc    <= mmio_pc_seq;
                             mmio_resync_lookahead_pc <= spike_dpi_rvfi_itf.pc_wdata;
-                            mmio_branch_pending      <= 1'b0;
                         end else if ((diff & ~22'h100040) == 22'd0
                                 && spike_dpi_rvfi_itf.mem_rmask != '0
                                 && spike_dpi_rvfi_itf.mem_addr >= 64'h02000000
@@ -705,32 +624,6 @@ module monitor #(
                                 itf.rd_wdata[channel], spike_dpi_rvfi_itf.rd_wdata);
                             if (itf.rd_addr[channel] != '0)
                                 spike_dpi_set_ireg(itf.rd_addr[channel], itf.rd_wdata[channel]);
-                            // If rd_wdata diverged, the next instruction (mask/AND) will
-                            // also diverge because Spike used its real stub value.
-                            if (diff[6])
-                                mmio_load_follow_pending <= 1'b1;
-                        end else if (mmio_load_follow_pending && diff == 22'h00000040) begin
-                            // Mask/AND following a suppressed MMIO load: rd_wdata diverges
-                            // because Spike computed the AND with its stub register value.
-                            $display("[MMIO FOLLOW] order %0d pc=%h: mask follow (DUT=h%0x Spike=h%0x) -- suppressed",
-                                itf.order[channel], itf.pc_rdata[channel],
-                                itf.rd_wdata[channel], spike_dpi_rvfi_itf.rd_wdata);
-                            mmio_load_follow_pending <= 1'b0;
-                            mmio_branch_pending      <= 1'b1;
-                            if (itf.rd_addr[channel] != '0)
-                                spike_dpi_set_ireg(itf.rd_addr[channel], itf.rd_wdata[channel]);
-                        end else if (mmio_branch_pending && diff == 22'h00010000
-                                && itf.pc_wdata[channel] != mmio_pc_seq) begin
-                            // Branch after MMIO load follow: DUT took the backward branch
-                            // (UART TX not ready) while Spike's stub returned ready.
-                            // Save Spike's resume PC (past its invisible UART write) and
-                            // enter poll-skip mode to absorb all remaining DUT poll iterations.
-                            $display("[MMIO BRANCH] order %0d pc=%h: DUT re-polling (branch to %h), Spike resume %h -- entering poll skip",
-                                itf.order[channel], itf.pc_rdata[channel],
-                                itf.pc_wdata[channel], spike_dpi_rvfi_itf.pc_wdata);
-                            mmio_branch_pending  <= 1'b0;
-                            uart_spike_resume_pc <= spike_dpi_rvfi_itf.pc_wdata;
-                            uart_poll_skip       <= 1'b1;
                         end else if ((diff & ~22'h100040) == 22'd0
                                 && spike_dpi_rvfi_itf.mem_rmask != '0
                                 && spike_dpi_rvfi_itf.mem_addr >= 64'h80000000) begin
@@ -819,11 +712,6 @@ module monitor #(
                             itf.error <= 1'b1;
                         end
                     end
-                end
-                // Clear follow-up flags on clean pass so stale state doesn't persist.
-                if (diff == 22'd0 && !uart_poll_skip) begin
-                    mmio_load_follow_pending <= 1'b0;
-                    mmio_branch_pending      <= 1'b0;
                 end
                 spike_dpi_order = spike_dpi_order + 64'd1;
             end
