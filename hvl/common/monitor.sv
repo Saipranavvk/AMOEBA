@@ -806,4 +806,15 @@ module monitor #(
 
     `endif
 
+    // Unconditional heartbeat: prints every 100K cycles so simulation progress is visible.
+    longint sim_heartbeat_cycle;
+    initial sim_heartbeat_cycle = 0;
+    always @(posedge itf.clk iff !itf.rst) begin
+        sim_heartbeat_cycle = sim_heartbeat_cycle + 1;
+        if (sim_heartbeat_cycle % 5_000 == 0) begin
+            $display("[SIM] Heartbeat: %0d cycles elapsed (time=%0t)", sim_heartbeat_cycle, $time);
+            $fflush();
+        end
+    end
+
 endmodule
