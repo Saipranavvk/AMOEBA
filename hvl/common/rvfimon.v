@@ -12832,7 +12832,7 @@ module riscv_formal_monitor_rv64imafdc_zb_insn_c_flw (
 
   // C.FLW instruction (FP load - rd is FP reg)
   wire [64-1:0] addr = rvfi_rs1_rdata + insn_imm;
-  assign spec_valid = rvfi_valid && !insn_padding && insn_funct3 == 3'b 011 && insn_opcode == 2'b 00;
+  assign spec_valid = rvfi_valid && !insn_padding && insn_funct3 == 3'b 011 && insn_opcode == 2'b 00 && 64 == 32;
   assign spec_rs1_addr = insn_rs1;
   assign spec_rs2_addr = 0;
   assign spec_rd_addr = 0;
@@ -12930,7 +12930,7 @@ module riscv_formal_monitor_rv64imafdc_zb_insn_c_fsw (
 
   // C.FSW instruction (FP store - rs2 is FP reg)
   wire [64-1:0] addr = rvfi_rs1_rdata + insn_imm;
-  assign spec_valid = rvfi_valid && !insn_padding && insn_funct3 == 3'b 111 && insn_opcode == 2'b 00;
+  assign spec_valid = rvfi_valid && !insn_padding && insn_funct3 == 3'b 111 && insn_opcode == 2'b 00 && 64 == 32;
   assign spec_rs1_addr = insn_rs1;
   assign spec_rs2_addr = 0;
   assign spec_rd_addr = 0;
