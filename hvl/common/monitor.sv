@@ -361,8 +361,6 @@ module monitor #(
 
     `ifndef ECE411_NO_SPIKE_DPI
 
-        // NOTE: spike.so must be recompiled with uint64_t for wide fields when upgrading
-        // from RV32 to RV64. Until then, DPI comparisons check lower 32 bits only.
         typedef struct packed {
             bit [31:0] inst;
             bit [31:0] trapped;
@@ -393,8 +391,6 @@ module monitor #(
         import "DPI-C" function int unsigned spike_dpi_fin();
         import "DPI-C" function int unsigned spike_dpi_next(output spike_dpi_rvfi_itf_t r);
         import "DPI-C" function string spike_dpi_dasm();
-        import "DPI-C" function void spike_dpi_set_ireg(input int unsigned regnum, input longint unsigned val);
-
         initial begin
             automatic string elf_file;
             $value$plusargs("ELF_ECE411=%s", elf_file);
@@ -410,36 +406,6 @@ module monitor #(
         spike_dpi_rvfi_itf_t spike_dpi_rvfi_itf;
         longint spike_dpi_order;
         initial spike_dpi_order = 64'd0;
-
-        // Resync state for MMIO-silent-skip: Spike commits MMIO device stores without
-        // printing them in --log-commits.  When detected, we synthesize a matching
-        // response for the skipped instruction so lock-step comparison can resume.
-        logic        mmio_resync_pending;
-        logic [63:0] mmio_resync_target_pc;
-        logic [63:0] mmio_resync_lookahead_pc;
-        initial begin
-            mmio_resync_pending      = 1'b0;
-            mmio_resync_target_pc    = 64'd0;
-            mmio_resync_lookahead_pc = 64'd0;
-        end
-
-        // Cascade suppression: a DRAM load may return a value previously tainted by an
-        // MMIO divergence (e.g. CLINT mtime written to printf arg stack, then loaded by
-        // vprintfmt).  Track the tainted register so downstream arithmetic can be
-        // suppressed without emitting false errors.
-        logic       cascade_active;
-        logic [4:0] cascade_rd;
-        // Loop-skip: when Spike exits an iteration loop before DUT (because the loop
-        // count depends on a tainted DRAM value), synthesize DUT's extra iterations
-        // without advancing Spike's log pointer.
-        logic        loop_skip_active;
-        logic [63:0] loop_skip_exit_pc;
-        initial begin
-            cascade_active    = 1'b0;
-            cascade_rd        = 5'd0;
-            loop_skip_active  = 1'b0;
-            loop_skip_exit_pc = 64'd0;
-        end
 
         always @ (posedge itf.clk iff !itf.rst) begin
             if (!itf.halt) begin
@@ -463,76 +429,7 @@ module monitor #(
                 automatic int unsigned retval;
                 sp = s.pop_back();
                 channel = sp.channel;
-                if (mmio_resync_pending && itf.pc_rdata[channel] == mmio_resync_target_pc) begin
-                    // Spike silently committed this MMIO device store without logging it.
-                    // Synthesize a perfectly-matching response from DUT's RVFI so that
-                    // spike_dpi_next's saved lookahead (mmio_resync_lookahead_pc) becomes
-                    // the next instruction both sides will compare normally.
-                    spike_dpi_rvfi_itf.inst       = itf.inst[channel];
-                    spike_dpi_rvfi_itf.trapped    = '0;
-                    spike_dpi_rvfi_itf.rs1_addr   = '0;
-                    spike_dpi_rvfi_itf.rs2_addr   = '0;
-                    spike_dpi_rvfi_itf.rs1_rdata  = '0;
-                    spike_dpi_rvfi_itf.rs2_rdata  = '0;
-                    spike_dpi_rvfi_itf.rd_addr    = itf.rd_addr[channel];
-                    spike_dpi_rvfi_itf.rd_wdata   = itf.rd_wdata[channel];
-                    spike_dpi_rvfi_itf.frs1_addr  = '0;
-                    spike_dpi_rvfi_itf.frs2_addr  = '0;
-                    spike_dpi_rvfi_itf.frs3_addr  = '0;
-                    spike_dpi_rvfi_itf.frs1_rdata = '0;
-                    spike_dpi_rvfi_itf.frs2_rdata = '0;
-                    spike_dpi_rvfi_itf.frs3_rdata = '0;
-                    spike_dpi_rvfi_itf.frd_addr   = '0;
-                    spike_dpi_rvfi_itf.frd_wdata  = '0;
-                    spike_dpi_rvfi_itf.pc_rdata   = itf.pc_rdata[channel];
-                    spike_dpi_rvfi_itf.pc_wdata   = mmio_resync_lookahead_pc;
-                    spike_dpi_rvfi_itf.mem_addr   = {itf.mem_addr[channel][63:3], 3'b000};
-                    spike_dpi_rvfi_itf.mem_rmask  = {24'd0, itf.mem_rmask[channel]};
-                    spike_dpi_rvfi_itf.mem_wmask  = {24'd0, itf.mem_wmask[channel]};
-                    spike_dpi_rvfi_itf.mem_rdata  = itf.mem_rdata[channel];
-                    spike_dpi_rvfi_itf.mem_wdata  = itf.mem_wdata[channel];
-                    mmio_resync_pending <= 1'b0;
-                    retval = 1;
-                end else if (loop_skip_active) begin
-                    // Spike exited this iteration loop early (fewer iters due to tainted
-                    // DRAM value).  Synthesize DUT's remaining iterations without advancing
-                    // Spike's log.  Sync every written register into the shadow so normal
-                    // comparison resumes cleanly when DUT reaches the loop exit PC.
-                    if (itf.rd_addr[channel] != '0)
-                        spike_dpi_set_ireg(itf.rd_addr[channel], itf.rd_wdata[channel]);
-                    if (itf.pc_wdata[channel] == loop_skip_exit_pc) begin
-                        $display("[LOOP SKIP EXIT] order %0d pc=%h: DUT exits loop to %h; cascade cleared",
-                            itf.order[channel], itf.pc_rdata[channel], loop_skip_exit_pc);
-                        loop_skip_active <= 1'b0;
-                        cascade_active   <= 1'b0;
-                    end
-                    spike_dpi_rvfi_itf.inst       = itf.inst      [channel];
-                    spike_dpi_rvfi_itf.trapped    = '0;
-                    spike_dpi_rvfi_itf.rs1_addr   = '0;
-                    spike_dpi_rvfi_itf.rs2_addr   = '0;
-                    spike_dpi_rvfi_itf.rs1_rdata  = '0;
-                    spike_dpi_rvfi_itf.rs2_rdata  = '0;
-                    spike_dpi_rvfi_itf.rd_addr    = itf.rd_addr   [channel];
-                    spike_dpi_rvfi_itf.rd_wdata   = itf.rd_wdata  [channel];
-                    spike_dpi_rvfi_itf.frs1_addr  = '0;
-                    spike_dpi_rvfi_itf.frs2_addr  = '0;
-                    spike_dpi_rvfi_itf.frs3_addr  = '0;
-                    spike_dpi_rvfi_itf.frs1_rdata = '0;
-                    spike_dpi_rvfi_itf.frs2_rdata = '0;
-                    spike_dpi_rvfi_itf.frs3_rdata = '0;
-                    spike_dpi_rvfi_itf.frd_addr   = '0;
-                    spike_dpi_rvfi_itf.frd_wdata  = '0;
-                    spike_dpi_rvfi_itf.pc_rdata   = itf.pc_rdata  [channel];
-                    spike_dpi_rvfi_itf.pc_wdata   = itf.pc_wdata  [channel];
-                    spike_dpi_rvfi_itf.mem_addr   = {itf.mem_addr[channel][63:3], 3'b000};
-                    spike_dpi_rvfi_itf.mem_rmask  = {24'd0, itf.mem_rmask[channel]};
-                    spike_dpi_rvfi_itf.mem_wmask  = {24'd0, itf.mem_wmask[channel]};
-                    spike_dpi_rvfi_itf.mem_rdata  = itf.mem_rdata [channel];
-                    spike_dpi_rvfi_itf.mem_wdata  = itf.mem_wdata [channel];
-                    retval = 1;
-                end else begin
-                    retval = spike_dpi_next(spike_dpi_rvfi_itf);
-                end
+                retval = spike_dpi_next(spike_dpi_rvfi_itf);
                 if (retval == 2) begin
                     $fatal(0, "Spike co-simulation: Spike exited with error. Build spike with --enable-commitlog or set ECE411_NO_SPIKE_DPI.");
                 end else if (retval == 3) begin
@@ -590,128 +487,49 @@ module monitor #(
                     $display("");
                     itf.error <= 1'b1;
                 end else if (diff != 22'd0) begin
-                    // Check for MMIO-silent-skip before treating as a real error.
-                    // Pattern: only pc_wdata differs (diff[16] only), DUT sequential,
-                    // Spike is exactly 4 bytes past DUT's sequential next — meaning Spike
-                    // committed one MMIO device store without printing it in --log-commits.
-                    begin
-                        automatic logic [63:0] mmio_pc_seq;
-                        mmio_pc_seq = itf.pc_rdata[channel]
+                    $display("");
+                    $error("Spike Monitor Error at time %0t channel %0d order %0d", $time, channel, itf.order[channel]);
+                    $display("-------begin spike mismatch--------");
+                    $display("%010s %04s %09s %09s"              , "signal    ", "diff", "      dut", "    spike");
+                    $display("%010s %04s h%08x h%08x %s"         , "inst      ", diff[ 0] ? "--->" : "    ", itf.inst      [channel], spike_dpi_rvfi_itf.inst, spike_dpi_dasm());
+                    $display("%010s %04s        %02d        %02d", "rs1_addr  ", diff[ 1] ? "--->" : "    ", itf.rs1_addr  [channel], spike_dpi_rvfi_itf.rs1_addr  );
+                    $display("%010s %04s h%08x h%08x"            , "rs1_rdata ", diff[ 2] ? "--->" : "    ", itf.rs1_rdata [channel], spike_dpi_rvfi_itf.rs1_rdata );
+                    $display("%010s %04s        %02d        %02d", "rs2_addr  ", diff[ 3] ? "--->" : "    ", itf.rs2_addr  [channel], spike_dpi_rvfi_itf.rs2_addr  );
+                    $display("%010s %04s h%08x h%08x"            , "rs2_rdata ", diff[ 4] ? "--->" : "    ", itf.rs2_rdata [channel], spike_dpi_rvfi_itf.rs2_rdata );
+                    $display("%010s %04s        %02d        %02d", "rd_addr   ", diff[ 5] ? "--->" : "    ", itf.rd_addr   [channel], spike_dpi_rvfi_itf.rd_addr   );
+                    $display("%010s %04s h%08x h%08x"            , "rd_wdata  ", diff[ 6] ? "--->" : "    ", itf.rd_wdata  [channel], spike_dpi_rvfi_itf.rd_wdata  );
+                    `ifndef ECE411_NO_FLOAT
+                        $display("%010s %04s        %02d        %02d", "frs1_addr ", diff[ 7] ? "--->" : "    ", itf.frs1_addr [channel], spike_dpi_rvfi_itf.frs1_addr );
+                        $display("%010s %04s h%08x h%08x"            , "frs1_rdata", diff[ 8] ? "--->" : "    ", itf.frs1_rdata[channel], spike_dpi_rvfi_itf.frs1_rdata);
+                        $display("%010s %04s        %02d        %02d", "frs2_addr ", diff[ 9] ? "--->" : "    ", itf.frs2_addr [channel], spike_dpi_rvfi_itf.frs2_addr );
+                        $display("%010s %04s h%08x h%08x"            , "frs2_rdata", diff[10] ? "--->" : "    ", itf.frs2_rdata[channel], spike_dpi_rvfi_itf.frs2_rdata);
+                        $display("%010s %04s        %02d        %02d", "frs3_addr ", diff[11] ? "--->" : "    ", itf.frs3_addr [channel], spike_dpi_rvfi_itf.frs3_addr  );
+                        $display("%010s %04s h%08x h%08x"            , "frs3_rdata", diff[12] ? "--->" : "    ", itf.frs3_rdata[channel], spike_dpi_rvfi_itf.frs3_rdata);
+                        $display("%010s %04s        %02d        %02d", "frd_addr  ", diff[13] ? "--->" : "    ", itf.frd_addr  [channel], spike_dpi_rvfi_itf.frd_addr  );
+                        $display("%010s %04s h%08x h%08x"            , "frd_wdata ", diff[14] ? "--->" : "    ", itf.frd_wdata [channel], spike_dpi_rvfi_itf.frd_wdata );
+                    `endif
+                    $display("%010s %04s h%08x h%08x"            , "pc_rdata  ", diff[15] ? "--->" : "    ", itf.pc_rdata  [channel], spike_dpi_rvfi_itf.pc_rdata  );
+                    $display("%010s %04s h%08x h%08x"            , "pc_wdata  ", diff[16] ? "--->" : "    ", itf.pc_wdata  [channel], spike_dpi_rvfi_itf.pc_wdata  );
+                    if (diff[16]) begin
+                        automatic logic [63:0] pc_seq_next;
+                        pc_seq_next = itf.pc_rdata[channel]
                                     + (itf.inst[channel][1:0] != 2'b11 ? 64'd2 : 64'd4);
-                        if (diff == 22'h00010000
-                                && itf.pc_wdata[channel]       == mmio_pc_seq
-                                && spike_dpi_rvfi_itf.pc_wdata == mmio_pc_seq + 64'd4) begin
-                            // MMIO store silent-skip: Spike committed a device store without
-                            // logging it in --log-commits. Arm synthesis for the next commit.
-                            $display("[MMIO RESYNC] order %0d pc=%h: Spike silently skipped MMIO store at %h; resuming at %h",
-                                itf.order[channel], itf.pc_rdata[channel],
-                                mmio_pc_seq, spike_dpi_rvfi_itf.pc_wdata);
-                            mmio_resync_pending      <= 1'b1;
-                            mmio_resync_target_pc    <= mmio_pc_seq;
-                            mmio_resync_lookahead_pc <= spike_dpi_rvfi_itf.pc_wdata;
-                        end else if ((diff & ~22'h100040) == 22'd0
-                                && spike_dpi_rvfi_itf.mem_rmask != '0
-                                && spike_dpi_rvfi_itf.mem_addr >= 64'h02000000
-                                && spike_dpi_rvfi_itf.mem_addr <  64'h20000000) begin
-                            // MMIO load data divergence: Spike's device stub returned a
-                            // different value than the DUT's real peripheral (e.g. UART LSR
-                            // TEMT bit tracks actual TX state in DUT but is always set in
-                            // Spike's stub).  Force Spike's shadow register to DUT's value
-                            // so the next instruction's rs1_rdata comparison passes.
-                            $display("[MMIO LOAD DIFF] order %0d pc=%h: MMIO read at %h DUT=h%0x Spike=h%0x -- suppressed",
-                                itf.order[channel], itf.pc_rdata[channel],
-                                spike_dpi_rvfi_itf.mem_addr,
-                                itf.rd_wdata[channel], spike_dpi_rvfi_itf.rd_wdata);
-                            if (itf.rd_addr[channel] != '0)
-                                spike_dpi_set_ireg(itf.rd_addr[channel], itf.rd_wdata[channel]);
-                        end else if ((diff & ~22'h100040) == 22'd0
-                                && spike_dpi_rvfi_itf.mem_rmask != '0
-                                && spike_dpi_rvfi_itf.mem_addr >= 64'h80000000) begin
-                            // DRAM load returning a value previously tainted by MMIO divergence
-                            // (e.g. CLINT mtime was stored to printf arg stack by FreeRTOS and
-                            // is now being read back by vprintfmt).  Spike's process memory has
-                            // the wrong value; patch the shadow and start cascade tracking so
-                            // downstream arithmetic divergences can be suppressed cleanly.
-                            $display("[DRAM LOAD DIFF] order %0d pc=%h: DRAM read at %h DUT=h%0x Spike=h%0x -- cascade started",
-                                itf.order[channel], itf.pc_rdata[channel],
-                                spike_dpi_rvfi_itf.mem_addr,
-                                itf.rd_wdata[channel], spike_dpi_rvfi_itf.rd_wdata);
-                            if (itf.rd_addr[channel] != '0) begin
-                                spike_dpi_set_ireg(itf.rd_addr[channel], itf.rd_wdata[channel]);
-                                cascade_active <= 1'b1;
-                                cascade_rd     <= itf.rd_addr[channel][4:0];
-                            end
-                        end else if (cascade_active && diff == 22'h00000040
-                                && (spike_dpi_rvfi_itf.rs1_addr[4:0] == cascade_rd
-                                    || spike_dpi_rvfi_itf.rs2_addr[4:0] == cascade_rd)) begin
-                            // Arithmetic instruction consuming the tainted register: rd_wdata
-                            // diverges because Spike computed from its wrong value.  Patch the
-                            // shadow with DUT's result so the cascade propagates correctly.
-                            $display("[CASCADE FOLLOW] order %0d pc=%h: cascade x%0d, rd=x%0d DUT=h%0x Spike=h%0x -- suppressed",
-                                itf.order[channel], itf.pc_rdata[channel],
-                                cascade_rd, itf.rd_addr[channel],
-                                itf.rd_wdata[channel], spike_dpi_rvfi_itf.rd_wdata);
-                            if (itf.rd_addr[channel] != '0)
-                                spike_dpi_set_ireg(itf.rd_addr[channel], itf.rd_wdata[channel]);
-                        end else if (cascade_active && diff == 22'h00010000
-                                && spike_dpi_rvfi_itf.pc_wdata == mmio_pc_seq
-                                && itf.pc_wdata[channel] != mmio_pc_seq) begin
-                            // Loop-count divergence: Spike fell through (exited loop) but DUT
-                            // took a backward branch (still iterating) because the tainted
-                            // register produces more loop iterations in DUT than in Spike.
-                            // Enter loop-skip mode: synthesize DUT's remaining iterations
-                            // (keeping shadow in sync) until DUT reaches Spike's exit PC.
-                            $display("[CASCADE LOOP SKIP] order %0d pc=%h: Spike exited to %h, DUT looping to %h -- loop skip",
-                                itf.order[channel], itf.pc_rdata[channel],
-                                spike_dpi_rvfi_itf.pc_wdata, itf.pc_wdata[channel]);
-                            loop_skip_active  <= 1'b1;
-                            loop_skip_exit_pc <= spike_dpi_rvfi_itf.pc_wdata;
-                        end else begin
-                            $display("");
-                            $error("Spike Monitor Error at time %0t channel %0d order %0d", $time, channel, itf.order[channel]);
-                            $display("-------begin spike mismatch--------");
-                            $display("%010s %04s %09s %09s"              , "signal    ", "diff", "      dut", "    spike");
-                            $display("%010s %04s h%08x h%08x %s"         , "inst      ", diff[ 0] ? "--->" : "    ", itf.inst      [channel], spike_dpi_rvfi_itf.inst, spike_dpi_dasm());
-                            $display("%010s %04s        %02d        %02d", "rs1_addr  ", diff[ 1] ? "--->" : "    ", itf.rs1_addr  [channel], spike_dpi_rvfi_itf.rs1_addr  );
-                            $display("%010s %04s h%08x h%08x"            , "rs1_rdata ", diff[ 2] ? "--->" : "    ", itf.rs1_rdata [channel], spike_dpi_rvfi_itf.rs1_rdata );
-                            $display("%010s %04s        %02d        %02d", "rs2_addr  ", diff[ 3] ? "--->" : "    ", itf.rs2_addr  [channel], spike_dpi_rvfi_itf.rs2_addr  );
-                            $display("%010s %04s h%08x h%08x"            , "rs2_rdata ", diff[ 4] ? "--->" : "    ", itf.rs2_rdata [channel], spike_dpi_rvfi_itf.rs2_rdata );
-                            $display("%010s %04s        %02d        %02d", "rd_addr   ", diff[ 5] ? "--->" : "    ", itf.rd_addr   [channel], spike_dpi_rvfi_itf.rd_addr   );
-                            $display("%010s %04s h%08x h%08x"            , "rd_wdata  ", diff[ 6] ? "--->" : "    ", itf.rd_wdata  [channel], spike_dpi_rvfi_itf.rd_wdata  );
-                            `ifndef ECE411_NO_FLOAT
-                                $display("%010s %04s        %02d        %02d", "frs1_addr ", diff[ 7] ? "--->" : "    ", itf.frs1_addr [channel], spike_dpi_rvfi_itf.frs1_addr );
-                                $display("%010s %04s h%08x h%08x"            , "frs1_rdata", diff[ 8] ? "--->" : "    ", itf.frs1_rdata[channel], spike_dpi_rvfi_itf.frs1_rdata);
-                                $display("%010s %04s        %02d        %02d", "frs2_addr ", diff[ 9] ? "--->" : "    ", itf.frs2_addr [channel], spike_dpi_rvfi_itf.frs2_addr );
-                                $display("%010s %04s h%08x h%08x"            , "frs2_rdata", diff[10] ? "--->" : "    ", itf.frs2_rdata[channel], spike_dpi_rvfi_itf.frs2_rdata);
-                                $display("%010s %04s        %02d        %02d", "frs3_addr ", diff[11] ? "--->" : "    ", itf.frs3_addr [channel], spike_dpi_rvfi_itf.frs3_addr  );
-                                $display("%010s %04s h%08x h%08x"            , "frs3_rdata", diff[12] ? "--->" : "    ", itf.frs3_rdata[channel], spike_dpi_rvfi_itf.frs3_rdata);
-                                $display("%010s %04s        %02d        %02d", "frd_addr  ", diff[13] ? "--->" : "    ", itf.frd_addr  [channel], spike_dpi_rvfi_itf.frd_addr  );
-                                $display("%010s %04s h%08x h%08x"            , "frd_wdata ", diff[14] ? "--->" : "    ", itf.frd_wdata [channel], spike_dpi_rvfi_itf.frd_wdata );
-                            `endif
-                            $display("%010s %04s h%08x h%08x"            , "pc_rdata  ", diff[15] ? "--->" : "    ", itf.pc_rdata  [channel], spike_dpi_rvfi_itf.pc_rdata  );
-                            $display("%010s %04s h%08x h%08x"            , "pc_wdata  ", diff[16] ? "--->" : "    ", itf.pc_wdata  [channel], spike_dpi_rvfi_itf.pc_wdata  );
-                            if (diff[16]) begin
-                                automatic logic [63:0] pc_seq_next;
-                                pc_seq_next = itf.pc_rdata[channel]
-                                            + (itf.inst[channel][1:0] != 2'b11 ? 64'd2 : 64'd4);
-                                if (itf.pc_wdata[channel] == pc_seq_next)
-                                    $display("  [pc_wdata hint] DUT=sequential(pc+%0d), Spike jumped to %h -- interrupt/trap boundary",
-                                        itf.inst[channel][1:0] != 2'b11 ? 2 : 4,
-                                        spike_dpi_rvfi_itf.pc_wdata);
-                                else
-                                    $display("  [pc_wdata hint] DUT=%h Spike=%h -- both non-sequential",
-                                        itf.pc_wdata[channel], spike_dpi_rvfi_itf.pc_wdata);
-                            end
-                            $display("%010s %04s h%08x h%08x"            , "mem_addr  ", diff[17] ? "--->" : "    ", itf.mem_addr  [channel], spike_dpi_rvfi_itf.mem_addr  );
-                            $display("%010s %04s     b%04b     b%04b"    , "mem_rmask ", diff[18] ? "--->" : "    ", itf.mem_rmask [channel], spike_dpi_rvfi_itf.mem_rmask );
-                            $display("%010s %04s     b%04b     b%04b"    , "mem_wmask ", diff[19] ? "--->" : "    ", itf.mem_wmask [channel], spike_dpi_rvfi_itf.mem_wmask );
-                            $display("%010s %04s h%08x h%08x"            , "mem_rdata ", diff[20] ? "--->" : "    ", itf.mem_rdata [channel], spike_dpi_rvfi_itf.mem_rdata );
-                            $display("%010s %04s h%08x h%08x"            , "mem_wdata ", diff[21] ? "--->" : "    ", itf.mem_wdata [channel], spike_dpi_rvfi_itf.mem_wdata );
-                            $display("-------end spike mismatch----------");
-                            $display("");
-                            itf.error <= 1'b1;
-                        end
+                        if (itf.pc_wdata[channel] == pc_seq_next)
+                            $display("  [pc_wdata hint] DUT=sequential(pc+%0d), Spike jumped to %h -- interrupt/trap boundary",
+                                itf.inst[channel][1:0] != 2'b11 ? 2 : 4,
+                                spike_dpi_rvfi_itf.pc_wdata);
+                        else
+                            $display("  [pc_wdata hint] DUT=%h Spike=%h -- both non-sequential",
+                                itf.pc_wdata[channel], spike_dpi_rvfi_itf.pc_wdata);
                     end
+                    $display("%010s %04s h%08x h%08x"            , "mem_addr  ", diff[17] ? "--->" : "    ", itf.mem_addr  [channel], spike_dpi_rvfi_itf.mem_addr  );
+                    $display("%010s %04s     b%04b     b%04b"    , "mem_rmask ", diff[18] ? "--->" : "    ", itf.mem_rmask [channel], spike_dpi_rvfi_itf.mem_rmask );
+                    $display("%010s %04s     b%04b     b%04b"    , "mem_wmask ", diff[19] ? "--->" : "    ", itf.mem_wmask [channel], spike_dpi_rvfi_itf.mem_wmask );
+                    $display("%010s %04s h%08x h%08x"            , "mem_rdata ", diff[20] ? "--->" : "    ", itf.mem_rdata [channel], spike_dpi_rvfi_itf.mem_rdata );
+                    $display("%010s %04s h%08x h%08x"            , "mem_wdata ", diff[21] ? "--->" : "    ", itf.mem_wdata [channel], spike_dpi_rvfi_itf.mem_wdata );
+                    $display("-------end spike mismatch----------");
+                    $display("");
+                    itf.error <= 1'b1;
                 end
                 spike_dpi_order = spike_dpi_order + 64'd1;
             end
@@ -811,7 +629,7 @@ module monitor #(
     initial sim_heartbeat_cycle = 0;
     always @(posedge itf.clk iff !itf.rst) begin
         sim_heartbeat_cycle = sim_heartbeat_cycle + 1;
-        if (sim_heartbeat_cycle % 5_000 == 0) begin
+        if (sim_heartbeat_cycle % 100_000 == 0) begin
             $display("[SIM] Heartbeat: %0d cycles elapsed (time=%0t)", sim_heartbeat_cycle, $time);
             $fflush();
         end

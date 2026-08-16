@@ -128,14 +128,6 @@ extern "C" unsigned int spike_dpi_fin() {
 
 extern "C" const char *spike_dpi_dasm() { return ""; }
 
-// Force-write a value into Spike's shadow integer register file.  Used by
-// monitor.sv to re-sync Spike's register state after a suppressed MMIO load
-// mismatch (where Spike's device stub returned a different value than the DUT).
-extern "C" void spike_dpi_set_ireg(uint32_t reg, uint64_t val) {
-    if (reg > 0 && reg < 32)
-        s_iregs[reg] = val;
-}
-
 // Called once per retired instruction; fills 35-word WData array r[].
 // WData layout (last SV field = word[0]):
 //   [0,1]=mem_wdata  [2,3]=mem_rdata  [4]=mem_wmask  [5]=mem_rmask

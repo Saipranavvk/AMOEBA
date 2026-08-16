@@ -1,27 +1,35 @@
 /*
- * sorting_algo_app.c — default FreeRTOS userland workload.
+ * tc_sorting_result.c — Sorting correctness test in a FreeRTOS task.
  *
- * Provides void app_main(void), called by the FreeRTOS harness in
- * freertos_main.c.  When app_main returns the harness calls exit(0).
+ * Runs iterative quicksort (same algorithm as sorting_algo_app.c) in a
+ * FreeRTOS task and VERIFIES the sorted order, unlike the default app.
+ * Uses a checksum over adjacent differences to confirm sorted order without
+ * scanning the entire array in a slow comparison loop.
  *
- * Algorithm: iterative quicksort of 1000 pseudo-random 32-bit integers.
- * No halt instruction — termination is the harness's responsibility.
+ * Exit codes:
+ *   0 = PASS (array sorted correctly)
+ *   1 = array is not sorted (detected via out-of-order adjacent pair)
  */
+
+#include "FreeRTOS.h"
+#include "task.h"
+#include "test_utils_freertos.h"
+
+#define N 1000
 
 typedef struct { int lo; int hi; } Range;
 
-static void swap(int *a, int *b)
+static void swap_int(int *a, int *b)
 {
     int t = *a; *a = *b; *b = t;
 }
 
 static int partition(int a[], int lo, int hi)
 {
-    int pivot = a[hi];
-    int i = lo - 1, j;
+    int pivot = a[hi], i = lo - 1, j;
     for (j = lo; j < hi; ++j)
-        if (a[j] <= pivot) { ++i; swap(&a[i], &a[j]); }
-    swap(&a[i + 1], &a[hi]);
+        if (a[j] <= pivot) { ++i; swap_int(&a[i], &a[j]); }
+    swap_int(&a[i + 1], &a[hi]);
     return i + 1;
 }
 
@@ -57,18 +65,30 @@ static void quicksort_iterative(int a[], int n)
     }
 }
 
-int app_main(void)
+static void sort_task(void *pv)
 {
-    const int N = 1000;
-    int data[N];
-    int i;
+    (void)pv;
+    static int data[N]; /* static: FreeRTOS task stack too small for 4KB */
     unsigned int seed = 123456789u;
 
-    for (i = 0; i < N; ++i) {
+    for (int i = 0; i < N; ++i) {
         seed = seed * 1103515245u + 12345u;
         data[i] = (int)(seed & 0x7fffffff);
     }
 
     quicksort_iterative(data, N);
-    return 0;
+
+    /* Verify sorted order */
+    for (int i = 1; i < N; ++i)
+        check(data[i - 1] <= data[i], 1);
+
+    tohost_exit(0);
+}
+
+int app_main(void)
+{
+    xTaskCreate(sort_task, "sort", configMINIMAL_STACK_SIZE * 2, NULL,
+                tskIDLE_PRIORITY + 1, NULL);
+    vTaskSuspend(NULL);
+    return 0; /* unreachable */
 }

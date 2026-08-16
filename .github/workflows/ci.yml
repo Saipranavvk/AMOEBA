@@ -60,9 +60,9 @@ jobs:
           path: sim/verilator/build
           key: spike-build-${{ runner.os }}-${{ github.sha }}
 
-  # ── Build without Spike DPI (for FreeRTOS) ──────────────────────────────────
+  # ── Build without Spike DPI (ISA-level tests and FreeRTOS tests) ────────────
   ci-build-no-spike:
-    name: Build (No Spike DPI)
+    name: Build (No Spike DPI — ISA & FreeRTOS)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -99,13 +99,13 @@ jobs:
         run: echo "/opt/verilator/bin" >> $GITHUB_PATH
 
       - name: Compile (No Spike DPI)
-        run: PATH=/opt/verilator/bin:$PATH make -C sim build_freertos
+        run: PATH=/opt/verilator/bin:$PATH make -C sim build_isa_tests
 
-      - name: Cache FreeRTOS build
+      - name: Cache no-spike build
         uses: actions/cache@v4
         with:
-          path: sim/verilator/build_freertos
-          key: freertos-build-${{ runner.os }}-${{ github.sha }}
+          path: sim/verilator/build_no_spike
+          key: no-spike-build-${{ runner.os }}-${{ github.sha }}
 
   # ── Discover all baremetal tests ────────────────────────────────────────────
   ci-discover-tests:
@@ -134,7 +134,22 @@ jobs:
       - name: Discover ISA-level tests
         id: discover
         run: |
-          TESTS=$(find testcode/isa_level_testing -name "*.c" -type f | sed 's|testcode/isa_level_testing/||g' | sed 's|\.c$||g' | jq -R -s -c 'split("\n")[:-1]')
+          TESTS=$(find testcode/isa_level_testing -name "*.c" -type f ! -name "test_utils.h" | sed 's|testcode/isa_level_testing/||g' | sed 's|\.c$||g' | jq -R -s -c 'split("\n")[:-1]')
+          echo "tests=${TESTS}" >> $GITHUB_OUTPUT
+
+  # ── Discover all FreeRTOS tests ──────────────────────────────────────────────
+  ci-discover-freertos-tests:
+    name: Discover FreeRTOS Tests
+    runs-on: ubuntu-latest
+    outputs:
+      tests: ${{ steps.discover.outputs.tests }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Discover FreeRTOS tests
+        id: discover
+        run: |
+          TESTS=$(find testcode/freertos -name "tc_*.c" -type f | sed 's|testcode/freertos/||g' | sed 's|\.c$||g' | jq -R -s -c 'split("\n")[:-1]')
           echo "tests=${TESTS}" >> $GITHUB_OUTPUT
 
   # ── Build Spike executable (shared for baremetal tests) ────────────────────
@@ -194,18 +209,18 @@ jobs:
             gcc-riscv64-unknown-elf device-tree-compiler
           pip3 install --quiet pyyaml
 
-      - name: Restore FreeRTOS build cache
+      - name: Restore no-spike build cache
         uses: actions/cache@v4
         with:
-          path: sim/verilator/build_freertos
-          key: freertos-build-${{ runner.os }}-${{ github.sha }}
+          path: sim/verilator/build_no_spike
+          key: no-spike-build-${{ runner.os }}-${{ github.sha }}
           fail-on-cache-miss: true
 
       - name: Touch Vtop_tb to prevent timestamp-triggered rebuild
-        run: touch sim/verilator/build_freertos/Vtop_tb
+        run: touch sim/verilator/build_no_spike/Vtop_tb
 
       - name: Run ISA-level test
-        run: make -C sim run_isa_level PROG=../testcode/isa_level_testing/${{ matrix.test }}.c
+        run: make -C sim run_verilator_top_tb_no_spike PROG=../testcode/isa_level_testing/${{ matrix.test }}.c
 
   # ── Baremetal regression: run tests with cached Spike DPI simulator ────────
   ci-baremetal:
@@ -238,7 +253,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/spike-install
-          key: spike-commitlog-${{ runner.os }}-v1
+          key: spike-commitlog-${{ runner.os }}-v1.1.0
           fail-on-cache-miss: true
 
       - name: Add Spike to PATH
@@ -257,11 +272,14 @@ jobs:
       - name: Run baremetal test
         run: make -C sim run_verilator_top_tb PROG=../testcode/baremetal/${{ matrix.test }}.c
 
-  # ── FreeRTOS: run with cached no-spike simulator ────────────────────────────
+  # ── FreeRTOS regression: matrix over tc_*.c test programs ───────────────────
   ci-freertos:
-    name: FreeRTOS Test
+    name: FreeRTOS - ${{ matrix.test }}
     runs-on: ubuntu-latest
-    needs: [ci-baremetal, ci-isa-level]
+    needs: [ci-discover-freertos-tests, ci-build-no-spike, ci-baremetal, ci-isa-level]
+    strategy:
+      matrix:
+        test: ${{ fromJson(needs.ci-discover-freertos-tests.outputs.tests) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -278,21 +296,21 @@ jobs:
             gcc-riscv64-unknown-elf
           pip3 install --quiet pyyaml
 
-      - name: Clone FreeRTOS-Kernel
-        run: git clone --depth=1 https://github.com/FreeRTOS/FreeRTOS-Kernel.git ~/FreeRTOS-Kernel
+      - name: Fetch FreeRTOS-Kernel submodule
+        run: git submodule update --init third_party/FreeRTOS-Kernel
 
-      - name: Restore FreeRTOS build cache
+      - name: Restore no-spike build cache
         uses: actions/cache@v4
         with:
-          path: sim/verilator/build_freertos
-          key: freertos-build-${{ runner.os }}-${{ github.sha }}
+          path: sim/verilator/build_no_spike
+          key: no-spike-build-${{ runner.os }}-${{ github.sha }}
           fail-on-cache-miss: true
 
       - name: Touch Vtop_tb to prevent timestamp-triggered rebuild
-        run: touch sim/verilator/build_freertos/Vtop_tb
+        run: touch sim/verilator/build_no_spike/Vtop_tb
+
+      - name: Build FreeRTOS test ELF
+        run: make -C testcode/freertos build PROG=$(pwd)/testcode/freertos/${{ matrix.test }}.c
 
       - name: Run FreeRTOS test
-        run: make -C sim freertos
-
-      - name: Verify FreeRTOS UART output
-        run: grep -q "app_main() returned" sim/verilator/freertos_wally/simulation.log
+        run: make -C sim run_verilator_top_tb_no_spike PROG=$(pwd)/testcode/freertos/freertos_wally.elf

@@ -11,13 +11,11 @@ SIM_DIR   := $(REPO_ROOT)/sim
 CVW_DIR   := $(REPO_ROOT)/third_party/cvw
 
 # ---- FreeRTOS kernel ----
-# Default: ~/FreeRTOS-Kernel clone; override with FREERTOS_KERNEL_DIR env var
-# Future: will become $(REPO_ROOT)/third_party/FreeRTOS-Kernel once submodule is added
-FREERTOS_KERNEL_DIR ?= $(HOME)/FreeRTOS-Kernel
+FREERTOS_KERNEL_DIR ?= $(REPO_ROOT)/third_party/FreeRTOS-Kernel
 FREERTOS_PORT       := $(FREERTOS_KERNEL_DIR)/portable/GCC/RISC-V
 FREERTOS_PORT_CHIP  := $(FREERTOS_PORT)/chip_specific_extensions/RISCV_MTIME_CLINT_no_extensions
 
-# ---- Userland workload (must define void app_main(void)) ----
+# ---- Userland workload (must define int app_main(void)) ----
 PROG ?= $(abspath sorting_algo_app.c)
 
 # ---- Toolchain ----
@@ -77,7 +75,7 @@ build: $(ELF) $(SIM_DIR)/bin/memory_8.lst
 $(FREERTOS_KERNEL_DIR)/tasks.c:
 	@echo ""
 	@echo "ERROR: FreeRTOS-Kernel not found at $(FREERTOS_KERNEL_DIR)"
-	@echo "       Clone it: git clone https://github.com/FreeRTOS/FreeRTOS-Kernel $(FREERTOS_KERNEL_DIR)"
+	@echo "       Run: git submodule update --init third_party/FreeRTOS-Kernel"
 	@echo ""
 	@exit 1
 

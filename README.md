@@ -72,6 +72,7 @@ testcode/             C test programs
 third_party/          Git submodules
   cvw/                  OpenHW CORE-V Wally processor (source of hdl/cvw + hdl/core)
   riscv-formal/         riscv-formal RVFI monitor generator
+  FreeRTOS-Kernel/      FreeRTOS kernel (used by testcode/freertos/)
 sram/                 SRAM compiler outputs (config/, output/*.v *.db, sram.py)
 options.json          Project configuration (clock, ISA switches, synthesis settings)
 ```
@@ -136,6 +137,7 @@ git submodule update --init --recursive
 This clones:
 - `third_party/cvw` — OpenHW CORE-V Wally processor RTL
 - `third_party/riscv-formal` — RVFI monitor generator
+- `third_party/FreeRTOS-Kernel` — FreeRTOS kernel (used by `testcode/freertos/`)
 
 ---
 
@@ -281,39 +283,77 @@ These are passed automatically by the Makefile, but can be set manually when run
 
 ## FreeRTOS Tests
 
-The FreeRTOS build compiles the kernel + a userland workload and runs it in Verilator. Spike DPI co-simulation is disabled in this flow (the kernel's interrupt-driven scheduling is not modeled by Spike in commit-log mode).
+FreeRTOS tests compile the kernel + a userland workload and run in the no-spike Verilator binary (Spike DPI co-simulation is disabled — CLINT interrupt-driven scheduling is not modeled by Spike in commit-log mode). Correctness is checked via FreeRTOS task assertions that write to the HTif `tohost` address; the testbench treats any non-zero `tohost` value as a test failure.
 
 ### Prerequisites
 
-Clone the FreeRTOS kernel to your home directory (or override with `FREERTOS_KERNEL_DIR`):
+The FreeRTOS kernel is included as a submodule at `third_party/FreeRTOS-Kernel`. Initialize it with:
 
 ```bash
-git clone https://github.com/FreeRTOS/FreeRTOS-Kernel ~/FreeRTOS-Kernel
+git submodule update --init third_party/FreeRTOS-Kernel
 ```
+
+(Or initialize all submodules at once: `git submodule update --init --recursive`)
 
 ### Build and Run
 
 ```bash
-cd testcode/freertos
+cd sim
 
-# Build ELF + memory image + run Verilator (TIMEOUT=50,000,000 cycles)
+# Build the no-spike Verilator binary (shared with ISA-level tests)
+make build_isa_tests
+
+# Run the default sorting workload (sorting_algo_app.c)
 make freertos
 
-# Or step by step:
-make build            # compile ELF (rv64imac_zicsr, no FPU)
-make verilator        # compile Verilator binary (reuses sim/verilator/ artifacts if fresh)
-make sim              # run simulation
+# Run all tc_*.c FreeRTOS test programs
+make freertos_regression
 
-# Run both FreeRTOS sim and the full baremetal regression:
-make regression
+# Run a single tc_*.c test (e.g., tc_task_queue):
+make -C ../testcode/freertos build PROG=tc_task_queue.c
+make run_verilator_top_tb_no_spike PROG=../testcode/freertos/freertos_wally.elf
 ```
 
-To run a custom workload, define `void app_main(void)` in your source file and pass it:
+To run a custom workload, define `int app_main(void)` in your source file and pass it:
 ```bash
-make freertos PROG=/path/to/my_app.c
+cd testcode/freertos
+make build PROG=/absolute/path/to/my_app.c
+cd ../../sim
+make run_verilator_top_tb_no_spike PROG=../testcode/freertos/freertos_wally.elf
 ```
 
-Outputs: `testcode/freertos/sim.log`, `testcode/freertos/dump.fst`
+### Writing FreeRTOS Tests
+
+Each FreeRTOS test implements `int app_main(void)`:
+
+```c
+#include "FreeRTOS.h"
+#include "task.h"
+#include "test_utils_freertos.h"
+
+int app_main(void) {
+    // For simple tests: do work, check result, return exit code
+    check(2 + 2 == 4, 1);  // exits with code 1 if false
+    return 0;               // 0 = pass
+
+    // For task-based tests: create tasks, suspend self
+    // Tasks call tohost_exit(0) on success or check(cond, code) on failure
+}
+```
+
+The `check(cond, code)` macro and the `tohost_exit()` declaration are in `testcode/freertos/test_utils_freertos.h`. The actual `tohost_exit()` implementation (with the `cbo.flush` required for CVW's write-back D-cache) is in `syscalls_amoeba.c`.
+
+Exit code conventions used by the harness:
+
+| Code | Meaning |
+|---|---|
+| 0 | Test passed |
+| 1–N | Test-defined failure (check which assertion failed) |
+| 2 | Heap exhausted (`vApplicationMallocFailedHook`) |
+| 3 | Stack overflow (`vApplicationStackOverflowHook`) |
+| 4 | Root task creation failed |
+
+Outputs: `sim/verilator/freertos_wally/simulation.log`, `sim/verilator/dump.fst`
 
 ---
 
@@ -321,13 +361,39 @@ Outputs: `testcode/freertos/sim.log`, `testcode/freertos/dump.fst`
 
 ### `sim/` Targets
 
+**Build targets**
+
+| Target | Simulator binary | Description |
+|---|---|---|
+| `build` | `verilator/build/Vtop_tb` | Spike DPI simulator (baremetal co-simulation) |
+| `build_isa_tests` | `verilator/build_no_spike/Vtop_tb` | No-Spike simulator (ISA-level + FreeRTOS tests) |
+| `build_freertos` | `verilator/build_no_spike/Vtop_tb` | Alias for `build_isa_tests` |
+
+**Run targets**
+
 | Target | Description |
 |---|---|
-| `verilator/build/Vtop_tb` | Compile Verilator binary (incremental; also builds `spike.so`) |
-| `run_verilator_top_tb` | Run Verilator simulation (`PROG=` required) |
-| `vcs/top_tb` | Compile VCS binary |
+| `run_verilator_top_tb` | Run baremetal simulation (`PROG=` required — `.c` or `.elf`) |
+| `run_verilator_top_tb_no_spike` | Run ISA/FreeRTOS simulation (`PROG=` required) |
+| `run_isa_level` | Alias for `run_verilator_top_tb_no_spike` |
+| `run_verilator_top_tb_freertos` | Alias for `run_verilator_top_tb_no_spike` |
+| `freertos` | Build + run default FreeRTOS workload (`sorting_algo_app.c`) |
 | `run_vcs_top_tb` | Run VCS simulation (`PROG=` required) |
-| `regression` | Run all `testcode/baremetal/*.c` through Verilator in sequence |
+
+**Regression targets**
+
+| Target | Description |
+|---|---|
+| `baremetal_regression` | All `testcode/baremetal/*.c` with Spike DPI co-simulation |
+| `isa_regression` | All `testcode/isa_level_testing/*.c` without co-sim |
+| `freertos_regression` | All `testcode/freertos/tc_*.c` without co-sim |
+| `regression` | Runs all three tiers in order |
+
+**Utility targets**
+
+| Target | Description |
+|---|---|
+| `vcs/top_tb` | Compile VCS binary |
 | `spike` | Run Spike ISA sim, dump commit log (`ELF=` required) |
 | `interactive_spike` | Run Spike interactive debugger (`ELF=` required) |
 | `generate-rtl` | Run `bin/generate_rtl.sh` (refreshes hdl/cvw/ and creates hdl/core/) |
@@ -368,12 +434,19 @@ Run from the `lint/` directory. Requires Synopsys Spyglass (`sg_shell`).
 
 ## Verification Architecture
 
-Two independent checkers validate every retired instruction simultaneously:
+### Three-Tier Test Architecture
 
-| Checker | Method | ISA coverage | Failure action |
-|---|---|---|---|
-| Spike DPI | RTL vs. ISA simulator, field-by-field | RV64IMAFDC + Zicsr/Zifencei/Zba/Zbb/Zbc/Zbs | `$fatal` with diff |
-| RVFI Monitor | Shadow register file | RV64IMAC (base + atomics + compressed) | `$error` / `$fatal` |
+| Tier | Build target | Spike DPI | Correctness checks | Pass/fail mechanism |
+|---|---|---|---|---|
+| **Baremetal** | `make build` | ✓ lock-step | Spike field-by-field + RVFI formal | `tohost` write |
+| **ISA-level** | `make build_isa_tests` | ✗ | RVFI formal + `test_utils.h` assertions | `tohost` write |
+| **FreeRTOS** | `make build_isa_tests` | ✗ | RVFI formal + task assertions | `tohost` write |
+
+ISA-level and FreeRTOS tests share one compiled binary (`ECE411_NO_SPIKE_DPI`). Baremetal tests use a separate binary with full Spike DPI co-simulation.
+
+MMIO accesses (UART at `0x10000000`, CLINT at `0x02000000`) are not logged by Spike's `--log-commits` output, so any test that uses UART or CLINT interrupts would cause spurious Spike divergences. Baremetal tests are therefore pure arithmetic/memory code; OS and peripheral tests use the no-spike tiers.
+
+Two independent checkers validate every retired instruction simultaneously:
 
 ### Spike DPI Co-Simulation
 
@@ -540,19 +613,29 @@ The Spike DPI flow proves RTL ≡ Spike instruction-for-instruction on every exe
 
 ## CI/CD
 
-GitHub Actions (`.github/workflows/`) runs a three-tier pipeline on every push:
+GitHub Actions (`.github/workflows/ci.yml`) runs a three-tier matrix pipeline on every push/PR:
 
-| Stage | Trigger | What it does |
+| Job | Depends on | What it does |
 |---|---|---|
-| `ci-fast` | every push | `make check-generated` (verify committed generated files are current), then `make verilator/build/Vtop_tb` |
-| `ci-baremetal` | after `ci-fast` | `make regression` (all baremetal tests through Verilator) |
-| `ci-freertos` | after `ci-baremetal` | FreeRTOS regression |
+| `ci-build-spike` | — | Compiles `verilator/build/Vtop_tb` (Spike DPI); checks generated files |
+| `ci-build-no-spike` | — | Compiles `verilator/build_no_spike/Vtop_tb` (ISA + FreeRTOS) |
+| `ci-build-spike-exe` | — | Builds Spike v1.1.0 from source; cached across runs |
+| `ci-discover-tests` | — | Discovers `testcode/baremetal/*.c` → matrix |
+| `ci-discover-isa-tests` | — | Discovers `testcode/isa_level_testing/*.c` → matrix |
+| `ci-discover-freertos-tests` | — | Discovers `testcode/freertos/tc_*.c` → matrix |
+| `ci-baremetal` (matrix) | build-spike, build-spike-exe | Runs each baremetal test with Spike DPI co-sim |
+| `ci-isa-level` (matrix) | build-no-spike | Runs each ISA-level test; exit via `tohost` |
+| `ci-freertos` (matrix) | build-no-spike, ci-baremetal, ci-isa-level | Builds each `tc_*.c` ELF; runs; exit via `tohost` |
 
-**If CI fails on `check-generated`:** run `make generated-files` locally and commit the updated `hvl/common/rvfimon.v` and `hvl/common/rvfi_reference.svh`.
+Each FreeRTOS and ISA test appears as an independent check in the PR status panel. Pass/fail is determined entirely by the `tohost` exit code — no UART output scraping.
 
-**If CI fails on compilation:** check `verilator/build/compile.log` for Verilator errors, or `vcs/compile.log` for VCS errors.
+**If CI fails on `check-generated`:** run `make generated-files` locally and commit `hvl/common/rvfimon.v` and `hvl/common/rvfi_reference.svh`.
 
-**If CI fails on regression:** check `sim/verilator/<testname>/simulation.log` for a Spike mismatch diff or RVFI `$error` message.
+**If CI fails on compilation:** check `sim/verilator/build/compile.log` (Spike DPI) or `sim/verilator/build_no_spike/compile.log` (no-spike).
+
+**If a baremetal CI job fails:** check `sim/verilator/<testname>/simulation.log` for the Spike mismatch diff or RVFI `$error`.
+
+**If a FreeRTOS CI job fails:** the exit code in the simulation log indicates which `check()` assertion failed.
 
 ---
 
