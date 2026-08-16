@@ -215,7 +215,8 @@ freertos_regression: verilator/build_no_spike/Vtop_tb
 		total=$$((total+1)); \
 		name=$$(basename $$test .c); \
 		echo "=== [$$total] Running $$name ==="; \
-		if $(MAKE) -C $(CURDIR)/../testcode/freertos build PROG=$$test && \
+		if rm -f $(CURDIR)/../testcode/freertos/freertos_wally.elf && \
+		   $(MAKE) -C $(CURDIR)/../testcode/freertos build PROG=$$test && \
 		   $(MAKE) -s run_verilator_top_tb_no_spike PROG=$(CURDIR)/../testcode/freertos/freertos_wally.elf; then \
 			echo "  PASS: $$name"; pass=$$((pass+1)); \
 		else \
