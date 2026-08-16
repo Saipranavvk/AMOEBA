@@ -11,13 +11,11 @@ SIM_DIR   := $(REPO_ROOT)/sim
 CVW_DIR   := $(REPO_ROOT)/third_party/cvw
 
 # ---- FreeRTOS kernel ----
-# Default: ~/FreeRTOS-Kernel clone; override with FREERTOS_KERNEL_DIR env var
-# Future: will become $(REPO_ROOT)/third_party/FreeRTOS-Kernel once submodule is added
-FREERTOS_KERNEL_DIR ?= $(HOME)/FreeRTOS-Kernel
+FREERTOS_KERNEL_DIR ?= $(REPO_ROOT)/third_party/FreeRTOS-Kernel
 FREERTOS_PORT       := $(FREERTOS_KERNEL_DIR)/portable/GCC/RISC-V
 FREERTOS_PORT_CHIP  := $(FREERTOS_PORT)/chip_specific_extensions/RISCV_MTIME_CLINT_no_extensions
 
-# ---- Userland workload (must define void app_main(void)) ----
+# ---- Userland workload (must define int app_main(void)) ----
 PROG ?= $(abspath sorting_algo_app.c)
 
 # ---- Toolchain ----
@@ -70,68 +68,14 @@ ALL_SRCS := $(BSP_SRCS) $(FREERTOS_SRCS) $(APP_SRCS)
 ELF := freertos_wally.elf
 
 # ====================================================================
-# Verilator source lists (mirrors sim/Makefile; spike.so excluded)
-# ====================================================================
-PKG_SRCS  := $(shell find $(PKG_DIR) -name '*.sv')
-CORE_SV   := $(REPO_ROOT)/hdl/core/cvw.sv
-# cvw.sv listed first (package must precede modules); exclude from CORE_SRCS.
-CORE_SRCS := $(filter-out $(CORE_SV), $(shell find $(REPO_ROOT)/hdl/core -name '*.sv' -o -name '*.v' 2>/dev/null))
-# Exclude hdl/cvw/ and hdl/core/ from generic hdl find; CORE_SV + CORE_SRCS handle hdl/core/.
-HDL_SRCS  := $(filter-out $(REPO_ROOT)/hdl/cvw/% $(REPO_ROOT)/hdl/core/%, $(shell find $(HDL_DIR) -name '*.sv')) $(CORE_SRCS)
-
-COMM_HVL := $(shell find $(HVL_DIR)/common  -name '*.sv' -o -name '*.v')
-VER_HVL  := $(COMM_HVL) \
-             $(shell find $(HVL_DIR)/verilator -name '*.sv' -o -name '*.v' -o -name '*.cpp')
-
-DW_IP    := $(shell python3 $(BIN_DIR)/get_options.py dw_ip)
-VER_SRCS := $(PKG_SRCS) $(CORE_SV) $(HDL_SRCS) $(VER_HVL) $(DW_IP)
-HDRS     := $(shell find $(HVL_DIR) -name '*.svh') $(HVL_DIR)/common/rvfi_reference.json
-
-ECE411_NO_FLOAT := $(shell python3 $(BIN_DIR)/get_options.py no_float)
-
-CVW_INCDIRS := \
-    +incdir+$(REPO_ROOT)/hdl/core \
-    +incdir+$(PKG_DIR) \
-    +incdir+$(CVW_DIR)/config/rv64gc
-
-COMMON_FLAGS := \
-    +incdir+$(HVL_DIR)/common \
-    $(CVW_INCDIRS) \
-    $(ECE411_NO_FLOAT) \
-    +define+DW_SUPPRESS_WARN \
-    +define+ECE411_NO_SPIKE_DPI \
-    +define+ECE411_NO_SPIKE_PRINTER
-
-VER_FLAGS := $(COMMON_FLAGS) \
-    +incdir+$(HVL_DIR)/verilator \
-    -Wall --timescale 1ps/1ps \
-    -Mdir $(abspath build) \
-    -O3 --output-split 20000 --output-split-cfuncs 200 \
-    -CFLAGS "-O3 -march=native -flto -DNDEBUG" \
-    -LDFLAGS "-flto" \
-    --x-assign fast --x-initial fast \
-    --trace-fst --trace-structs \
-    --cc \
-    --exe $(abspath $(HVL_DIR)/verilator/verilator_harness.cpp) \
-    $(SIM_DIR)/verilator_warn.vlt \
-    +define+ECE411_VERILATOR \
-    --threads $(shell nproc)
-
-TIMEOUT ?= 50000000
-
-# ====================================================================
-.PHONY: freertos build sim verilator regression clean
-
-freertos: sim
+.PHONY: build clean
 
 build: $(ELF) $(SIM_DIR)/bin/memory_8.lst
-
-verilator: build/Vtop_tb
 
 $(FREERTOS_KERNEL_DIR)/tasks.c:
 	@echo ""
 	@echo "ERROR: FreeRTOS-Kernel not found at $(FREERTOS_KERNEL_DIR)"
-	@echo "       Clone it: git clone https://github.com/FreeRTOS/FreeRTOS-Kernel $(FREERTOS_KERNEL_DIR)"
+	@echo "       Run: git submodule update --init third_party/FreeRTOS-Kernel"
 	@echo ""
 	@exit 1
 
@@ -142,38 +86,5 @@ $(ELF): $(FREERTOS_KERNEL_DIR)/tasks.c $(ALL_SRCS) freertos_wally.ld
 $(SIM_DIR)/bin/memory_8.lst: $(ELF)
 	python3 $(BIN_DIR)/generate_memory_file.py -8 $<
 
-build/Vtop_tb: $(VER_SRCS) $(HDRS)
-	mkdir -p build
-	python3 $(BIN_DIR)/rvfi_reference.py 1 $(ECE411_NO_FLOAT)
-	PERL5LIB="$(SIM_DIR)/perl5:$${PERL5LIB}" \
-	verilator $(VER_FLAGS) $(VER_SRCS) --top-module top_tb \
-	    |& tee build/compile.log
-	$(MAKE) --jobs=$(shell echo $$(nproc)-2 | bc) \
-	    -C $(abspath build) -f Vtop_tb.mk \
-	    |& tee -a build/compile.log
-
-sim: build/Vtop_tb $(SIM_DIR)/bin/memory_8.lst
-	mkdir -p spike
-	find . -maxdepth 1 -name "dump.fst" -delete
-	./build/Vtop_tb \
-	    +TIMEOUT_ECE411=$(TIMEOUT) \
-	    +CLOCK_PERIOD_PS_ECE411=$(shell python3 $(BIN_DIR)/get_options.py clock) \
-	    +BRAM_0_ON_X_ECE411=$(shell python3 $(BIN_DIR)/get_options.py bmem_x) \
-	    +MEMLST_ECE411="$(abspath $(SIM_DIR)/bin/memory_8.lst)" \
-	    +ELF_ECE411="$(abspath $(ELF))" \
-	    |& tee sim.log
-	@grep -q "PASSED\|\$$finish" sim.log || \
-	    (echo ""; echo "WARNING: PASSED not found in sim.log — check for FAILED or timeout"; echo "")
-
-regression: freertos
-	@echo ""
-	@echo "=== Bare-metal regression (sim/Makefile) ==="
-	$(MAKE) -C $(SIM_DIR) regression
-	@echo ""
-	@echo "=== All regressions passed ==="
-
 clean:
-	rm -rf build/ spike/ \
-	       $(ELF) $(ELF:.elf=.dis) \
-	       $(SIM_DIR)/bin/memory_8.lst \
-	       sim.log dump.fst time.txt
+	rm -rf $(ELF) $(ELF:.elf=.dis) dump.fst

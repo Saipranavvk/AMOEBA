@@ -12832,7 +12832,7 @@ module riscv_formal_monitor_rv64imafdc_zb_insn_c_flw (
 
   // C.FLW instruction (FP load - rd is FP reg)
   wire [64-1:0] addr = rvfi_rs1_rdata + insn_imm;
-  assign spec_valid = rvfi_valid && !insn_padding && insn_funct3 == 3'b 011 && insn_opcode == 2'b 00;
+  assign spec_valid = rvfi_valid && !insn_padding && insn_funct3 == 3'b 011 && insn_opcode == 2'b 00 && 64 == 32;
   assign spec_rs1_addr = insn_rs1;
   assign spec_rs2_addr = 0;
   assign spec_rd_addr = 0;
@@ -12930,7 +12930,7 @@ module riscv_formal_monitor_rv64imafdc_zb_insn_c_fsw (
 
   // C.FSW instruction (FP store - rs2 is FP reg)
   wire [64-1:0] addr = rvfi_rs1_rdata + insn_imm;
-  assign spec_valid = rvfi_valid && !insn_padding && insn_funct3 == 3'b 111 && insn_opcode == 2'b 00;
+  assign spec_valid = rvfi_valid && !insn_padding && insn_funct3 == 3'b 111 && insn_opcode == 2'b 00 && 64 == 32;
   assign spec_rs1_addr = insn_rs1;
   assign spec_rs2_addr = 0;
   assign spec_rd_addr = 0;
@@ -14684,9 +14684,12 @@ module riscv_formal_monitor_rv64imafdc_zb_insn_div (
   wire misa_ok = 1;
 
   // DIV instruction
+  wire signed [64-1:0] div_rs1_s = rvfi_rs1_rdata;
+  wire signed [64-1:0] div_rs2_s = rvfi_rs2_rdata;
+  wire signed [64-1:0] div_result_s = div_rs1_s / div_rs2_s;
   wire [64-1:0] result = rvfi_rs2_rdata == 64'b0 ? {64{1'b1}} :
                                          rvfi_rs1_rdata == {1'b1, {64-1{1'b0}}} && rvfi_rs2_rdata == {64{1'b1}} ? {1'b1, {64-1{1'b0}}} :
-                                         $signed(rvfi_rs1_rdata) / $signed(rvfi_rs2_rdata);
+                                         div_result_s;
   assign spec_valid = rvfi_valid && !insn_padding && insn_funct7 == 7'b 0000001 && insn_funct3 == 3'b 100 && insn_opcode == 7'b 0110011;
   assign spec_rs1_addr = insn_rs1;
   assign spec_rs2_addr = insn_rs2;
@@ -14841,9 +14844,12 @@ module riscv_formal_monitor_rv64imafdc_zb_insn_divw (
   wire misa_ok = 1;
 
   // DIVW instruction
+  wire signed [31:0] divw_rs1_s = rvfi_rs1_rdata[31:0];
+  wire signed [31:0] divw_rs2_s = rvfi_rs2_rdata[31:0];
+  wire signed [31:0] divw_result_s = divw_rs1_s / divw_rs2_s;
   wire [31:0] result = rvfi_rs2_rdata[31:0] == 32'b0 ? {32{1'b1}} :
                        rvfi_rs1_rdata == {1'b1, {31{1'b0}}} && rvfi_rs2_rdata == {32{1'b1}} ? {1'b1, {31{1'b0}}} :
-                       $signed(rvfi_rs1_rdata[31:0]) / $signed(rvfi_rs2_rdata[31:0]);
+                       divw_result_s;
   assign spec_valid = rvfi_valid && !insn_padding && insn_funct7 == 7'b 0000001 && insn_funct3 == 3'b 100 && insn_opcode == 7'b 0111011;
   assign spec_rs1_addr = insn_rs1;
   assign spec_rs2_addr = insn_rs2;
@@ -19256,9 +19262,12 @@ module riscv_formal_monitor_rv64imafdc_zb_insn_rem (
   wire misa_ok = 1;
 
   // REM instruction
+  wire signed [64-1:0] rem_rs1_s = rvfi_rs1_rdata;
+  wire signed [64-1:0] rem_rs2_s = rvfi_rs2_rdata;
+  wire signed [64-1:0] rem_result_s = rem_rs1_s % rem_rs2_s;
   wire [64-1:0] result = rvfi_rs2_rdata == 64'b0 ? rvfi_rs1_rdata :
                                          rvfi_rs1_rdata == {1'b1, {64-1{1'b0}}} && rvfi_rs2_rdata == {64{1'b1}} ? {64{1'b0}} :
-                                         $signed(rvfi_rs1_rdata) % $signed(rvfi_rs2_rdata);
+                                         rem_result_s;
   assign spec_valid = rvfi_valid && !insn_padding && insn_funct7 == 7'b 0000001 && insn_funct3 == 3'b 110 && insn_opcode == 7'b 0110011;
   assign spec_rs1_addr = insn_rs1;
   assign spec_rs2_addr = insn_rs2;
@@ -19413,9 +19422,12 @@ module riscv_formal_monitor_rv64imafdc_zb_insn_remw (
   wire misa_ok = 1;
 
   // REMW instruction
+  wire signed [31:0] remw_rs1_s = rvfi_rs1_rdata[31:0];
+  wire signed [31:0] remw_rs2_s = rvfi_rs2_rdata[31:0];
+  wire signed [31:0] remw_result_s = remw_rs1_s % remw_rs2_s;
   wire [31:0] result = rvfi_rs2_rdata == 32'b0 ? rvfi_rs1_rdata :
                        rvfi_rs1_rdata == {1'b1, {31{1'b0}}} && rvfi_rs2_rdata == {32{1'b1}} ? {32{1'b0}} :
-                       $signed(rvfi_rs1_rdata[31:0]) % $signed(rvfi_rs2_rdata[31:0]);
+                       remw_result_s;
   assign spec_valid = rvfi_valid && !insn_padding && insn_funct7 == 7'b 0000001 && insn_funct3 == 3'b 110 && insn_opcode == 7'b 0111011;
   assign spec_rs1_addr = insn_rs1;
   assign spec_rs2_addr = insn_rs2;

@@ -188,5 +188,5 @@ int main(void) {
     tc_mul_operations();
     tc_div_operations();
 
-    return 0;
+    test_finish();
 }

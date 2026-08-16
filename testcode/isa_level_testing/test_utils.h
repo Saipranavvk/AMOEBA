@@ -115,6 +115,10 @@ static inline void print_summary(void) {
 
 static inline int total_failures(void) { return _fail_count; }
 
+static inline void __attribute__((noreturn)) test_finish(void) {
+    sim_exit(total_failures() != 0 ? 1 : 0);
+}
+
 // -------------------------------------------------------------------------
 // Fence.I helper (for self-modifying code test)
 // -------------------------------------------------------------------------

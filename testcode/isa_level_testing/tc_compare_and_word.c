@@ -212,5 +212,5 @@ int main(void) {
     tc_compare_branch();
     tc_rv64_word_ops();
 
-    return 0;
+    test_finish();
 }

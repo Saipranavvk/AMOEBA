@@ -102,36 +102,3 @@
         timeout <= timeout - 1;
     end
 
-    // ---- INTERRUPT DIAGNOSTIC (temporary) — remove when no longer needed ----
-    // Uses dut.* hierarchical references; lives in hvl/ to avoid check_sus restrictions.
-    longint unsigned s_intr_taken;
-    longint unsigned s_intr_handler_rptd;
-
-    always_ff @(posedge clk) begin
-        if (rst) begin
-            s_intr_taken        <= 0;
-            s_intr_handler_rptd <= 0;
-        end else begin
-            if (dut.TrapM & dut.InterruptM & ~dut.StallW)
-                s_intr_taken <= s_intr_taken + 1;
-            if (dut.IntrReported)
-                s_intr_handler_rptd <= s_intr_handler_rptd + 1;
-        end
-    end
-
-    always @(posedge clk iff !rst) begin
-        if (dut.TrapM & dut.InterruptM & ~dut.StallW)
-            $display("[INTR #%0d @ %0t] W: pc=%h inst=%h | TrapVectorM=%h  PCM=%h | InstrValidW=%b InstrValidM=%b",
-                s_intr_taken + 1, $time,
-                dut.PCW,
-                dut.InstrRawW[1:0] != 2'b11 ? {16'h0000, dut.InstrRawW[15:0]} : dut.InstrRawW,
-                dut.TrapVectorM, dut.PCM, dut.InstrValidW, dut.InstrValidM);
-        if (dut.IntrReported)
-            $display("[INTR #%0d HANDLER @ %0t] First handler instr committed: pc=%h inst=%h",
-                s_intr_handler_rptd + 1, $time, dut.PCW,
-                dut.InstrRawW[1:0] != 2'b11 ? {16'h0000, dut.InstrRawW[15:0]} : dut.InstrRawW);
-    end
-
-    final $display("[INTR DIAG] interrupts taken: %0d  handler instrs reported (intr=1): %0d",
-        s_intr_taken, s_intr_handler_rptd);
-    // ---- END INTERRUPT DIAGNOSTIC ----

@@ -14,7 +14,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Fetch riscv-formal submodule
+        run: git submodule update --init third_party/riscv-formal
 
       - name: Install dependencies
         run: |
@@ -57,14 +60,17 @@ jobs:
           path: sim/verilator/build
           key: spike-build-${{ runner.os }}-${{ github.sha }}
 
-  # ── Build without Spike DPI (for FreeRTOS) ──────────────────────────────────
+  # ── Build without Spike DPI (ISA-level tests and FreeRTOS tests) ────────────
   ci-build-no-spike:
-    name: Build (No Spike DPI)
+    name: Build (No Spike DPI — ISA & FreeRTOS)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Fetch riscv-formal submodule
+        run: git submodule update --init third_party/riscv-formal
 
       - name: Install dependencies
         run: |
@@ -93,13 +99,13 @@ jobs:
         run: echo "/opt/verilator/bin" >> $GITHUB_PATH
 
       - name: Compile (No Spike DPI)
-        run: PATH=/opt/verilator/bin:$PATH make -C sim build_freertos
+        run: PATH=/opt/verilator/bin:$PATH make -C sim build_isa_tests
 
-      - name: Cache FreeRTOS build
+      - name: Cache no-spike build
         uses: actions/cache@v4
         with:
-          path: sim/verilator/build_freertos
-          key: freertos-build-${{ runner.os }}-${{ github.sha }}
+          path: sim/verilator/build_no_spike
+          key: no-spike-build-${{ runner.os }}-${{ github.sha }}
 
   # ── Discover all baremetal tests ────────────────────────────────────────────
   ci-discover-tests:
@@ -114,6 +120,36 @@ jobs:
         id: discover
         run: |
           TESTS=$(find testcode/baremetal -name "*.c" -type f | sed 's|testcode/baremetal/||g' | sed 's|\.c$||g' | jq -R -s -c 'split("\n")[:-1]')
+          echo "tests=${TESTS}" >> $GITHUB_OUTPUT
+
+  # ── Discover all ISA-level tests ─────────────────────────────────────────────
+  ci-discover-isa-tests:
+    name: Discover ISA-Level Tests
+    runs-on: ubuntu-latest
+    outputs:
+      tests: ${{ steps.discover.outputs.tests }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Discover ISA-level tests
+        id: discover
+        run: |
+          TESTS=$(find testcode/isa_level_testing -name "*.c" -type f ! -name "test_utils.h" | sed 's|testcode/isa_level_testing/||g' | sed 's|\.c$||g' | jq -R -s -c 'split("\n")[:-1]')
+          echo "tests=${TESTS}" >> $GITHUB_OUTPUT
+
+  # ── Discover all FreeRTOS tests ──────────────────────────────────────────────
+  ci-discover-freertos-tests:
+    name: Discover FreeRTOS Tests
+    runs-on: ubuntu-latest
+    outputs:
+      tests: ${{ steps.discover.outputs.tests }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Discover FreeRTOS tests
+        id: discover
+        run: |
+          TESTS=$(find testcode/freertos -name "tc_*.c" -type f | sed 's|testcode/freertos/||g' | sed 's|\.c$||g' | jq -R -s -c 'split("\n")[:-1]')
           echo "tests=${TESTS}" >> $GITHUB_OUTPUT
 
   # ── Build Spike executable (shared for baremetal tests) ────────────────────
@@ -149,18 +185,58 @@ jobs:
           make -j$(nproc)
           make install
 
+  # ── ISA-level regression: run tests with no-spike simulator ─────────────────
+  ci-isa-level:
+    name: ISA-Level - ${{ matrix.test }}
+    runs-on: ubuntu-latest
+    needs: [ci-discover-isa-tests, ci-build-no-spike]
+    strategy:
+      matrix:
+        test: ${{ fromJson(needs.ci-discover-isa-tests.outputs.tests) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Fetch riscv-formal submodule
+        run: git submodule update --init third_party/riscv-formal
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3 python3-pip gcc g++ make \
+            autoconf flex bison libfl-dev help2man zlib1g-dev \
+            gcc-riscv64-unknown-elf device-tree-compiler
+          pip3 install --quiet pyyaml
+
+      - name: Restore no-spike build cache
+        uses: actions/cache@v4
+        with:
+          path: sim/verilator/build_no_spike
+          key: no-spike-build-${{ runner.os }}-${{ github.sha }}
+          fail-on-cache-miss: true
+
+      - name: Touch Vtop_tb to prevent timestamp-triggered rebuild
+        run: touch sim/verilator/build_no_spike/Vtop_tb
+
+      - name: Run ISA-level test
+        run: make -C sim run_verilator_top_tb_no_spike PROG=../testcode/isa_level_testing/${{ matrix.test }}.c
+
   # ── Baremetal regression: run tests with cached Spike DPI simulator ────────
   ci-baremetal:
     name: Baremetal - ${{ matrix.test }}
     runs-on: ubuntu-latest
-    needs: [ci-discover-tests, ci-build-spike, ci-build-no-spike, ci-build-spike-exe]
+    needs: [ci-discover-tests, ci-build-spike, ci-build-spike-exe]
     strategy:
       matrix:
         test: ${{ fromJson(needs.ci-discover-tests.outputs.tests) }}
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Fetch riscv-formal submodule
+        run: git submodule update --init third_party/riscv-formal
 
       - name: Install dependencies
         run: |
@@ -177,7 +253,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/spike-install
-          key: spike-commitlog-${{ runner.os }}-v1
+          key: spike-commitlog-${{ runner.os }}-v1.1.0
           fail-on-cache-miss: true
 
       - name: Add Spike to PATH
@@ -196,15 +272,21 @@ jobs:
       - name: Run baremetal test
         run: make -C sim run_verilator_top_tb PROG=../testcode/baremetal/${{ matrix.test }}.c
 
-  # ── FreeRTOS: run with cached no-spike simulator ────────────────────────────
+  # ── FreeRTOS regression: matrix over tc_*.c test programs ───────────────────
   ci-freertos:
-    name: FreeRTOS Test
+    name: FreeRTOS - ${{ matrix.test }}
     runs-on: ubuntu-latest
-    needs: ci-baremetal
+    needs: [ci-discover-freertos-tests, ci-build-no-spike, ci-baremetal, ci-isa-level]
+    strategy:
+      matrix:
+        test: ${{ fromJson(needs.ci-discover-freertos-tests.outputs.tests) }}
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Fetch riscv-formal submodule
+        run: git submodule update --init third_party/riscv-formal
 
       - name: Install dependencies
         run: |
@@ -214,18 +296,21 @@ jobs:
             gcc-riscv64-unknown-elf
           pip3 install --quiet pyyaml
 
-      - name: Clone FreeRTOS-Kernel
-        run: git clone --depth=1 https://github.com/FreeRTOS/FreeRTOS-Kernel.git ~/FreeRTOS-Kernel
+      - name: Fetch FreeRTOS-Kernel submodule
+        run: git submodule update --init third_party/FreeRTOS-Kernel
 
-      - name: Restore FreeRTOS build cache
+      - name: Restore no-spike build cache
         uses: actions/cache@v4
         with:
-          path: sim/verilator/build_freertos
-          key: freertos-build-${{ runner.os }}-${{ github.sha }}
+          path: sim/verilator/build_no_spike
+          key: no-spike-build-${{ runner.os }}-${{ github.sha }}
           fail-on-cache-miss: true
 
       - name: Touch Vtop_tb to prevent timestamp-triggered rebuild
-        run: touch sim/verilator/build_freertos/Vtop_tb
+        run: touch sim/verilator/build_no_spike/Vtop_tb
+
+      - name: Build FreeRTOS test ELF
+        run: make -C testcode/freertos build PROG=$(pwd)/testcode/freertos/${{ matrix.test }}.c
 
       - name: Run FreeRTOS test
-        run: make -C sim freertos
+        run: make -C sim run_verilator_top_tb_no_spike PROG=$(pwd)/testcode/freertos/freertos_wally.elf

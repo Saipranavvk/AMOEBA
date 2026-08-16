@@ -150,5 +150,5 @@ int main(void) {
       tc_alu_basic();
       tc_shift_operations();
 
-    return 0;
+    test_finish();
 }
