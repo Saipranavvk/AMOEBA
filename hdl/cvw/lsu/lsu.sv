@@ -326,7 +326,7 @@ module lsu import cvw::*;  #(parameter cvw_t P) (
       assign BusRW = (~CacheableM & ~SelDTIM )? LSURWM : '0;
       assign CacheableOrFlushCacheM = CacheableM | FlushDCacheM;
       assign CacheRWM = (CacheableM & ~SelDTIM) ? LSURWM : '0;
-      assign FlushDCache = FlushDCacheM & ~(SelHPTW);
+      assign FlushDCache = FlushDCacheM & ~SelHPTW;                          // exclusion-tag: lsu FlushDCacheSelHPTW
 
       cache #(.P(P), .PA_BITS(P.PA_BITS), .LINELEN(P.DCACHE_LINELENINBITS), .NUMSETS(P.DCACHE_WAYSIZEINBYTES*8/LINELEN),
               .NUMWAYS(P.DCACHE_NUMWAYS), .LOGBWPL(LLENLOGBWPL), .WORDLEN(CACHEWORDLEN), .MUXINTERVAL(P.LLEN), .READ_ONLY_CACHE(0)) dcache(
@@ -339,7 +339,7 @@ module lsu import cvw::*;  #(parameter cvw_t P) (
         .CacheCommitted(DCacheCommittedM),
         .CacheBusAdr(DCacheBusAdr), .ReadDataWord(DCacheReadDataWordM),
         .FetchBuffer, .CacheBusRW(CacheBusRW),
-        .CacheBusAck(DCacheBusAck), .InvalidateCache(1'b0), .CMOpM(CacheCMOpM));
+        .CacheBusAck(DCacheBusAck), .InvalidateCache(1'b0), .InvalidateFlushStage(LSUFlushW), .CMOpM(CacheCMOpM));
 
       ahbcacheinterface #(.P(P), .BEATSPERLINE(BEATSPERLINE), .AHBWLOGBWPL(AHBWLOGBWPL), .LINELEN(LINELEN),  .LLENPOVERAHBW(LLENPOVERAHBW), .READ_ONLY_CACHE(0)) ahbcacheinterface(
         .HCLK(clk), .HRESETn(~reset), .Flush(LSUFlushW),
