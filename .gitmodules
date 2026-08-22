@@ -1,6 +1,6 @@
 [submodule "third_party/cvw"]
 	path = third_party/cvw
-	url = https://github.com/openhwgroup/cvw
+	url = https://github.com/Saipranavvk/cvw.git
 	branch = master
 [submodule "third_party/riscv-formal"]
 	path = third_party/riscv-formal
