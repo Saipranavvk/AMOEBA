@@ -7,7 +7,10 @@
  * FreeRTOS configuration for Wally/AMOEBA RISC-V bare metal simulation.
  *
  * Clock and timer values assume wallypipelinedsoc defaults:
- *   CPU: 100 MHz,  CLINT TIMECLK: 10 MHz
+ *   CPU: 100 MHz.  CVW's clint_apb increments MTIME once per PCLK, and
+ *   PCLK == HCLK == the CPU clock (the separate TIMECLK path is commented
+ *   out upstream and TIMECLK is tied low in rv64_core_wrapper.sv), so the
+ *   mtime frequency equals configCPU_CLOCK_HZ.
  *----------------------------------------------------------*/
 
 /* ---- Scheduler behaviour ---- */
@@ -19,11 +22,20 @@
 
 /* ---- Clock / tick ---- */
 #define configCPU_CLOCK_HZ                      ( ( uint32_t ) 100000000 )
-#define configTICK_RATE_HZ                      ( ( TickType_t ) 100 )
-/* mtime frequency (TIMECLK) drives clint_set_timer_interval() */
-#define configMTIME_HZ                          ( ( uint64_t ) 10000000 )
-/* Interval in mtime counts between FreeRTOS ticks */
-#define configTICK_CLOCK_HZ                     ( configMTIME_HZ / configTICK_RATE_HZ )
+/*
+ * The RISC-V port derives its mtimecmp step from
+ *   uxTimerIncrementsForOneTick = configCPU_CLOCK_HZ / configTICK_RATE_HZ
+ * and mtime advances one count per CPU cycle here, so that quotient is
+ * literally the number of simulated clock cycles per FreeRTOS tick.
+ *
+ * A realistic 100 Hz tick would be 1,000,000 cycles -- longer than the
+ * testbench's default 10,000,000-cycle timeout allows for a vTaskDelay(10),
+ * and hours of wall time under Verilator with FST tracing.  10 kHz gives a
+ * 10,000-cycle tick, which keeps tick-driven tests to seconds of wall time.
+ * Tick counts (not wall-clock milliseconds) are what the tc_*.c tests assert
+ * on, so shortening the tick does not weaken them.
+ */
+#define configTICK_RATE_HZ                      ( ( TickType_t ) 10000 )
 
 /* ---- Memory ---- */
 #define configTOTAL_HEAP_SIZE                   ( ( size_t ) ( 64 * 1024 ) )

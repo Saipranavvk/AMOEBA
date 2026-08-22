@@ -1,6 +1,7 @@
 [submodule "third_party/cvw"]
 	path = third_party/cvw
-	url = https://github.com/vedvyas5/cvw.git
+	url = https://github.com/Saipranavvk/cvw.git
+	branch = master
 [submodule "third_party/riscv-formal"]
 	path = third_party/riscv-formal
 	url = https://github.com/Saipranavvk/riscv-formal

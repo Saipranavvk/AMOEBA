@@ -45,8 +45,20 @@ int app_main(void)
     s_sem = xSemaphoreCreateBinary();
     if (!s_sem)
         return 2;
-    xTaskCreate(giver, "giver", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 2, NULL);
-    xTaskCreate(taker, "taker", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1, NULL);
+    /*
+     * The taker must outrank the giver.  A binary semaphore saturates at one
+     * token, so a give issued while a token is still pending is silently
+     * dropped and the taker can never reach 5.  Running the taker at the
+     * higher priority guarantees it preempts the giver and drains the token
+     * before the giver can run again, which makes the handshake independent
+     * of configTICK_RATE_HZ and of how long task creation takes.
+     *
+     * Creating the taker first also means it is already blocked on the
+     * semaphore before the first give, rather than being created in a window
+     * where a tick can let the giver run a second time.
+     */
+    xTaskCreate(taker, "taker", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 2, NULL);
+    xTaskCreate(giver, "giver", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1, NULL);
     /* Taker calls tohost_exit(); app_main never returns */
     vTaskSuspend(NULL);
     return 0; /* unreachable */

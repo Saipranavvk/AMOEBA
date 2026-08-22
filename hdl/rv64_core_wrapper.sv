@@ -410,9 +410,13 @@ module rv64_core_wrapper import cvw::*; (
 
     logic [63:0] pc_wdata_seq;
     assign pc_wdata_seq = PCW + (InstrRawW[1:0] == 2'b11 ? 64'd4 : 64'd2);
+    // Note: an interrupt taken in M must NOT redirect pc_wdata of the instruction
+    // retiring in W. RVFI requires pc_wdata to be that instruction's architectural
+    // next PC; the fetch discontinuity is expressed by rvfi_intr on the first handler
+    // instruction (see InterruptTakenPending above), which rvfimon honors when
+    // comparing the shadow PC against the next pc_rdata.
     assign monitor_pc_wdata = RetW                 ? EPCW        :   // mret/sret: return to saved EPC
                               TrapW                ? TrapVectorW :   // exception: jump to handler
-                              (TrapM & InterruptM) ? TrapVectorM :   // interrupt in M: next PC is the handler, not the suppressed M-stage instruction
                               InstrValidM          ? PCM         :   // normal: lookahead to M stage
                               InstrValidE          ? PCE         :
                               InstrValidD          ? PCD         :
