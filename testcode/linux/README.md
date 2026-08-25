@@ -83,7 +83,7 @@ boot log into a table of these with per-phase cycle costs.
 python3 testcode/linux/boot_report.py sim/verilator/linux_boot/simulation.log --wall 385
 ```
 
-## Two things that make this finish in hours instead of weeks
+## What makes this finish in hours instead of weeks
 
 **Waveforms are compiled out, not disabled.** `make -C sim build_linux` builds
 without `--trace-fst`. `+NO_DUMP_ALL_ECE411` is not enough — the SV-side
@@ -93,12 +93,27 @@ trace would run to hundreds of GB. The build is also single-threaded on purpose:
 on a single-hart in-order core, `--threads 4` measured 11% *slower* than
 `--threads 1` at four times the CPU.
 
-**The device tree understates the timer by 100x.** CVW's CLINT increments MTIME
-once per system clock, so the real rate is 100 MHz. At that rate one jiffy
-(`HZ=100`) costs 1,000,000 simulated cycles and every `msleep(20)` costs two
-million. `dts/amoeba.dts` declares 1 MHz instead (`TIMEBASE_HZ` in the Makefile),
-which cuts every timer-based wait in the boot by 100x. Timer interrupts become
-proportionally more frequent — one per 10,000 cycles — which is negligible.
+**The device tree must state the timer rate truthfully.** CVW's CLINT
+increments MTIME once per system clock, so `timebase-frequency` is 100 MHz
+(`TIMEBASE_HZ` in the Makefile). One jiffy (`HZ=100`) therefore costs 1,000,000
+simulated cycles, and every `msleep(20)` costs two million.
+
+> **Do not "optimise" this by declaring a lower frequency.** Understating it
+> looks like a free 100x cut to every timer wait, and an earlier draft of this
+> document recommended exactly that. It livelocks the kernel.
+> `timebase-frequency` is what Linux uses to convert nanoseconds into MTIME
+> ticks. Declaring 1 MHz against 100 MHz hardware makes the kernel's nanosecond
+> 100x coarser than the hardware's, so each hrtimer deadline is programmed to an
+> MTIME value that has *already* passed. The interrupt re-fires on return from
+> the handler and the boot stops making forward progress. The symptom is a boot
+> that runs for hundreds of millions of cycles while the heartbeat PC sits in
+> `ktime_get`, `hrtimer_interrupt`, `clockevents_program_event` and
+> `riscv_clock_next_event`.
+
+**Timer cost is cut in the kernel config instead.** `CONFIG_HZ_PERIODIC=y` with
+`CONFIG_HIGH_RES_TIMERS` off keeps the timer on a plain periodic tick, so the
+boot pays one interrupt per 1,000,000 cycles instead of reprogramming a one-shot
+comparator on every hrtimer expiry.
 
 The kernel command line also carries `no5lvl no4lvl`. Linux probes SATP for
 Sv57, then Sv48, then Sv39, keeping the deepest the hardware accepts; CVW

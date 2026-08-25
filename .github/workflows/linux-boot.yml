@@ -19,6 +19,20 @@ on:
         description: 'UART string that ends the run (see testcode/linux/README.md)'
         required: false
         default: 'AMOEBA_LINUX_BOOT_OK'
+  # Runs the full boot against a PR before it can reach main.  The job is hours
+  # long and re-fires on every push to the PR, which is acceptable because a
+  # boot regression is otherwise only caught by the nightly, after the change
+  # has already landed.  Paths are limited to what the boot actually depends
+  # on: the image sources, the core, the testbench and the simulation makefile.
+  pull_request:
+    branches: [main]
+    paths:
+      - 'testcode/linux/**'
+      - 'bin/linux_image_to_lst.py'
+      - 'hdl/**'
+      - 'hvl/**'
+      - 'sim/Makefile'
+      - '.github/workflows/linux-boot.yml'
 
 # gh run list / gh run download need actions:read.  A repository whose default
 # token is contents-only would otherwise fail at the download step.
@@ -72,12 +86,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p testcode/linux/build
+          # The image must come from this branch.  An unscoped lookup takes the
+          # newest success on any branch, so a PR could silently boot main's
+          # kernel and prove nothing about the change under review.
+          # GITHUB_HEAD_REF is set only for pull_request events; GITHUB_REF_NAME
+          # covers schedule and workflow_dispatch.
+          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          echo "Looking for a boot image built from branch: $BRANCH"
           RUN_ID=$(gh run list --repo "$GITHUB_REPOSITORY" \
+                     --branch "$BRANCH" \
                      --workflow linux-image.yml --status success \
                      --limit 1 --json databaseId --jq '.[0].databaseId')
           if [ -z "$RUN_ID" ]; then
-            echo "No successful linux-image.yml run to take an image from."
-            echo "Run that workflow first (Actions -> Linux Boot Image -> Run workflow)."
+            echo "No successful linux-image.yml run on branch '$BRANCH'."
+            echo "That workflow builds on push when testcode/linux/** changes;"
+            echo "otherwise run it manually (Actions -> Linux Boot Image -> Run workflow)."
             exit 1
           fi
           gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
