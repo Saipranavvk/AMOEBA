@@ -252,6 +252,9 @@ FREERTOS_TESTS    ?= $(shell find $(CURDIR)/../testcode/freertos -name 'tc_*.c')
 RISCV_FORMAL_MONITOR_DIR = $(CURDIR)/../third_party/riscv-formal/monitor
 RISCV_FORMAL_MONITOR     = $(RISCV_FORMAL_MONITOR_DIR)/generate.py
 RVFIMON_ISA          ?= rv64imafdc_zb
+# Local fix on top of the generated monitor.  Applied by generated-files and
+# re-applied by check-generated, so regenerating cannot silently drop it.
+RVFIMON_PATCH        = $(CURDIR)/../patches/rvfimon-clz-ctz.patch
 
 .PHONY: generate-rtl
 generate-rtl:
@@ -262,12 +265,14 @@ generated-files:
 	python3 $(CURDIR)/../bin/rvfi_reference.py 1 $(ECE411_NO_FLOAT)
 	cd $(RISCV_FORMAL_MONITOR_DIR) && \
 	    python3 generate.py -i $(RVFIMON_ISA) -a -r 0 -c 1 > $(CURDIR)/../hvl/common/rvfimon.v
+	patch -s $(CURDIR)/../hvl/common/rvfimon.v < $(RVFIMON_PATCH)
 
 .PHONY: check-generated
 check-generated:
 	@tmp=$$(mktemp -d); \
 	python3 $(CURDIR)/../bin/rvfi_reference.py 1 $(ECE411_NO_FLOAT); \
 	cd $(RISCV_FORMAL_MONITOR_DIR) && python3 generate.py -i $(RVFIMON_ISA) -a -r 0 -c 1 > $$tmp/rvfimon.v; \
+	patch -s $$tmp/rvfimon.v < $(RVFIMON_PATCH) || (echo "ERROR: $(RVFIMON_PATCH) no longer applies to the generated monitor." && echo "The submodule moved; rebase or drop the patch if it is upstream now." && rm -rf $$tmp && exit 1); \
 	diff $(CURDIR)/../hvl/common/rvfimon.v $$tmp/rvfimon.v || (echo "ERROR: rvfimon.v is stale — run 'make generated-files'" && rm -rf $$tmp && exit 1); \
 	rm -rf $$tmp; \
 	echo "Generated files are up to date."
