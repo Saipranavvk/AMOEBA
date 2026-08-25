@@ -43,6 +43,11 @@ interface mon_itf #(
             logic [XLEN-1:0]    mem_rdata  [CHANNELS];
             logic [XLEN-1:0]    mem_wdata  [CHANNELS];
 
+            // Set when the retiring instruction performed a misaligned data
+            // access.  The generated riscv-formal models cannot represent one,
+            // so monitor.sv waives their verdict for the Linux tier.
+            logic               mem_misaligned [CHANNELS];
+
             bit             halt  = 1'b0;
             bit             error = 1'b0;
 

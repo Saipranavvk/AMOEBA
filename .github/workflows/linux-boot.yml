@@ -1,0 +1,129 @@
+# Nightly Linux boot test.
+#
+# Boots Linux 6.6 on the CVW core under Verilator and requires that PID 1 print
+# its magic string over the SoC UART.
+#
+# Budget, measured on a 20-core desktop: 353,555,362 cycles in 3,187 s at
+# 110.9 kHz.  A GitHub-hosted runner has fewer, slower cores, so assume 2-4x and
+# budget accordingly -- but the whole run must still fit inside GitHub's hard
+# 6-hour job ceiling, which is why the image is built by a separate workflow and
+# downloaded here rather than built in this job.
+name: Linux Boot (nightly)
+
+on:
+  schedule:
+    - cron: '0 7 * * *'   # 07:00 UTC nightly
+  workflow_dispatch:
+    inputs:
+      milestone:
+        description: 'UART string that ends the run (see testcode/linux/README.md)'
+        required: false
+        default: 'AMOEBA_LINUX_BOOT_OK'
+
+# gh run list / gh run download need actions:read.  A repository whose default
+# token is contents-only would otherwise fail at the download step.
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  boot:
+    name: Boot to userspace
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Fetch riscv-formal submodule
+        run: git submodule update --init third_party/riscv-formal
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3 python3-pip gcc g++ make \
+            autoconf flex bison libfl-dev help2man zlib1g-dev
+          pip3 install --quiet pyyaml
+
+      - name: Cache Verilator v5.026
+        id: cache-verilator
+        uses: actions/cache@v4
+        with:
+          path: /opt/verilator
+          key: verilator-5.026-${{ runner.os }}
+
+      - name: Build Verilator v5.026 from source
+        if: steps.cache-verilator.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/verilator/verilator --branch v5.026 --depth=1 /tmp/verilator-src
+          cd /tmp/verilator-src && autoconf
+          ./configure --prefix=/opt/verilator
+          make -j$(nproc)
+          make install
+
+      - name: Add Verilator to PATH
+        run: echo "/opt/verilator/bin" >> $GITHUB_PATH
+
+      # Built by .github/workflows/linux-image.yml.  Building a kernel here would
+      # cost 10-30 minutes of the simulation budget.
+      - name: Download boot image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p testcode/linux/build
+          RUN_ID=$(gh run list --repo "$GITHUB_REPOSITORY" \
+                     --workflow linux-image.yml --status success \
+                     --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -z "$RUN_ID" ]; then
+            echo "No successful linux-image.yml run to take an image from."
+            echo "Run that workflow first (Actions -> Linux Boot Image -> Run workflow)."
+            exit 1
+          fi
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name amoeba-linux-boot-image --dir testcode/linux/build
+          ls -la testcode/linux/build
+
+      - name: Show image provenance
+        run: cat testcode/linux/build/boot.provenance
+
+      - name: Build Linux boot simulator
+        run: make -C sim build_linux
+
+      # Cheap pre-flight: proves the UART tap, the .lst loader and the pass
+      # matcher all work before committing hours to a boot.
+      - name: Console-path smoke test
+        run: |
+          make -C testcode/linux smoke
+          make -C sim linux_boot \
+            LINUX_MEMLST=$PWD/testcode/linux/build/uart_smoke.lst \
+            LINUX_PASS=AMOEBA_UART_OK LINUX_TIMEOUT=400000
+
+      # 800M cycles is ~2.3x the measured 353.5M, so a genuine hang fails in
+      # reasonable time instead of burning to the job ceiling.
+      - name: Boot Linux
+        # The milestone goes through env rather than being interpolated into the
+        # script: inside a block scalar there is no YAML quote escaping, so a
+        # nested quote in a GitHub expression is a parse error, and the value
+        # would also be re-parsed by the shell.
+        env:
+          MILESTONE: ${{ github.event.inputs.milestone || 'AMOEBA_LINUX_BOOT_OK' }}
+        run: |
+          make -C sim linux_boot \
+            LINUX_TIMEOUT=800000000 \
+            LINUX_PASS="$MILESTONE"
+
+      - name: Milestone timing report
+        if: always()
+        run: |
+          python3 testcode/linux/boot_report.py \
+            sim/verilator/linux_boot/simulation.log || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-boot-logs
+          path: |
+            sim/verilator/linux_boot/simulation.log
+            sim/verilator/linux_boot/boot_uart.log
+          retention-days: 14

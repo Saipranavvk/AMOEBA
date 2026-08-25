@@ -57,6 +57,16 @@ module simple_memory_w_mask #(
                             rdata_xmask[i*8 +: 8] = 'x;
                         end
                     end
+`ifdef ECE411_LINUX
+                    // Linux touches vast stretches of DRAM the image never
+                    // loaded.  An absent associative-array key reads as 'x,
+                    // which Verilator's --x-assign fast silently turns into 0
+                    // but VCS does not.  Materialise the word as zero so both
+                    // simulators agree.  The rdata_xmask check below is kept:
+                    // byte lanes the DUT did not request still read as 'x.
+                    if (internal_memory_array.exists(itf.addr[0][DWIDTH-1:3]) == 0)
+                        internal_memory_array[itf.addr[0][DWIDTH-1:3]] = '0;
+`endif
                     itf.rdata[0] <= internal_memory_array[itf.addr[0][DWIDTH-1:3]] ^ rdata_xmask;
                 end
                 if (delay_counter == 1) begin
@@ -69,6 +79,13 @@ module simple_memory_w_mask #(
                     itf.resp[0] <= 1'b1;
                 end
                 if (delay_counter == 1) begin
+`ifdef ECE411_LINUX
+                    // A byte-masked write to a word that was never loaded would
+                    // otherwise leave the untouched lanes at 'x, and the D-cache
+                    // write-allocates 512-bit lines over fresh DRAM constantly.
+                    if (internal_memory_array.exists(itf.addr[0][DWIDTH-1:3]) == 0)
+                        internal_memory_array[itf.addr[0][DWIDTH-1:3]] = '0;
+`endif
                     for (int i = 0; i < MWIDTH; i++) begin
                         if (itf.wmask[0][i]) begin
                             internal_memory_array[itf.addr[0][DWIDTH-1:3]][i*8 +: 8] = itf.wdata[0][i*8 +: 8];

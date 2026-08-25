@@ -445,7 +445,12 @@ module uartPC16550D #(parameter UART_PRESCALE) (
           TXHR     <= Din;
           txhrfull <= 1'b1;
         end
+`ifndef ECE411_LINUX
+        // Fires twice per store (PENABLE is held an extra cycle by the
+        // AHB-to-APB bridge) and would double every character of a boot log.
+        // The testbench taps this same strobe with edge detection instead.
         $write("%c",Din); // for testbench
+`endif
       end
       if (txstate == UART_IDLE) begin // move data into tx shift register if available
         if (fifoenabled) begin

@@ -14223,7 +14223,12 @@ module riscv_formal_monitor_rv64imafdc_zb_insn_clz (
     integer i;
     begin
       clz64 = 64;
-      for (i = 63; i >= 0; i = i - 1)
+      // AMOEBA local fix -- see testcode/linux/README.md.
+      // The generated loop assigns on *every* set bit instead of stopping at
+      // the first, so it ends up reporting the bit at the far end of the word:
+      // ctz returned the highest set bit and clz the lowest.  Reversing the
+      // iteration order makes the final assignment the correct one.
+      for (i = 0; i < 64; i = i + 1)
         if (v[i]) clz64 = 63 - i;
     end
   endfunction
@@ -14283,7 +14288,12 @@ module riscv_formal_monitor_rv64imafdc_zb_insn_clzw (
     integer i;
     begin
       clz32 = 32;
-      for (i = 31; i >= 0; i = i - 1)
+      // AMOEBA local fix -- see testcode/linux/README.md.
+      // The generated loop assigns on *every* set bit instead of stopping at
+      // the first, so it ends up reporting the bit at the far end of the word:
+      // ctz returned the highest set bit and clz the lowest.  Reversing the
+      // iteration order makes the final assignment the correct one.
+      for (i = 0; i < 32; i = i + 1)
         if (v[i]) clz32 = 31 - i;
     end
   endfunction
@@ -14467,7 +14477,12 @@ module riscv_formal_monitor_rv64imafdc_zb_insn_ctz (
     integer i;
     begin
       ctz64 = 64;
-      for (i = 0; i < 64; i = i + 1)
+      // AMOEBA local fix -- see testcode/linux/README.md.
+      // The generated loop assigns on *every* set bit instead of stopping at
+      // the first, so it ends up reporting the bit at the far end of the word:
+      // ctz returned the highest set bit and clz the lowest.  Reversing the
+      // iteration order makes the final assignment the correct one.
+      for (i = 63; i >= 0; i = i - 1)
         if (v[i]) ctz64 = i;
     end
   endfunction
@@ -14527,7 +14542,12 @@ module riscv_formal_monitor_rv64imafdc_zb_insn_ctzw (
     integer i;
     begin
       ctz32 = 32;
-      for (i = 0; i < 32; i = i + 1)
+      // AMOEBA local fix -- see testcode/linux/README.md.
+      // The generated loop assigns on *every* set bit instead of stopping at
+      // the first, so it ends up reporting the bit at the far end of the word:
+      // ctz returned the highest set bit and clz the lowest.  Reversing the
+      // iteration order makes the final assignment the correct one.
+      for (i = 31; i >= 0; i = i - 1)
         if (v[i]) ctz32 = i;
     end
   endfunction
