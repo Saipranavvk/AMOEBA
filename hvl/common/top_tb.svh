@@ -45,6 +45,18 @@
 
     `include "rvfi_reference.svh"
 
+    // ---- misaligned-access flag for the RVFI waiver ------------------------
+    // Recomputed here rather than read from mon_itf.mem_addr, which the wrapper
+    // has already masked to an 8-byte boundary and so cannot reveal
+    // misalignment.  Funct3W[1:0] encodes the access size as log2(bytes).
+`ifdef ECE411_LINUX
+    wire [63:0] acc_size_mask = (64'd1 << dut.Funct3W[1:0]) - 64'd1;
+    assign mon_itf.mem_misaligned[0] = mon_itf.valid[0] && (|dut.MemRWW) &&
+                                       ((dut.IEUAdrW & acc_size_mask) != 64'd0);
+`else
+    assign mon_itf.mem_misaligned[0] = 1'b0;
+`endif
+
     // ---- UART transmit tap -------------------------------------------------
     // syscalls_amoeba.c reaches printf() -- and therefore configASSERT() -- by
     // storing bytes to the NS16550 transmit holding register at UART_BASE.
@@ -56,18 +68,110 @@
 
     string uart_line = "";
 
+    // Declared here rather than with the other counters below: the console
+    // printer cycle-stamps each line, and SystemVerilog needs the declaration
+    // before that use.
+    longint unsigned sim_cycle = 0;
+
+    // ---- UART-driven pass/fail (Linux tier) --------------------------------
+    // A Linux userland runs in U-mode with the MMU on, so it cannot reach the
+    // HTif tohost address the bare-metal tiers use.  Instead the boot is judged
+    // by what it prints: +UART_PASS_ECE411 ends the run successfully, and
+    // +UART_FAIL_ECE411 aborts it immediately so a panic costs seconds rather
+    // than the full cycle timeout.  Both take a '|'-separated pattern list and
+    // match anywhere in a console line.  Unset (the default) means never match,
+    // which leaves the bare-metal and FreeRTOS tiers behaving exactly as before.
+    string uart_pass_str = "";
+    string uart_fail_str = "";
+    int    uart_log_fd   = 0;
+
+    initial begin
+        string s;
+        if ($value$plusargs("UART_PASS_ECE411=%s", s)) uart_pass_str = s;
+        if ($value$plusargs("UART_FAIL_ECE411=%s", s)) uart_fail_str = s;
+        if ($value$plusargs("UARTLOG_ECE411=%s", s))   uart_log_fd   = $fopen(s, "w");
+    end
+
+    function automatic bit str_contains(input string haystack, input string needle);
+        automatic int nl = needle.len();
+        automatic int hl = haystack.len();
+        if (nl == 0 || nl > hl) return 1'b0;
+        for (int i = 0; i <= hl - nl; i++) begin
+            if (haystack.substr(i, i + nl - 1) == needle) return 1'b1;
+        end
+        return 1'b0;
+    endfunction
+
+    function automatic bit str_matches_any(input string haystack, input string patterns);
+        automatic int start = 0;
+        automatic int plen  = patterns.len();
+        if (plen == 0) return 1'b0;
+        for (int i = 0; i <= plen; i++) begin
+            if (i == plen || patterns[i] == "|") begin
+                if (i > start && str_contains(haystack, patterns.substr(start, i - 1)))
+                    return 1'b1;
+                start = i + 1;
+            end
+        end
+        return 1'b0;
+    endfunction
+
     /* verilator lint_off BLKSEQ */  // string accumulation must be blocking
     function automatic void uart_flush_line();
         if (uart_line.len() != 0) begin
-            $display("[UART] %s", uart_line);
+            automatic string line = uart_line;
+`ifdef ECE411_LINUX
+            // Cycle-stamped so a boot log doubles as a timing breakdown: the
+            // cost of each phase is the difference between successive lines.
+            $display("[UART @%0d] %s", sim_cycle, line);
+`else
+            $display("[UART] %s", line);
+`endif
             uart_line = "";
+            if (uart_log_fd != 0) begin
+                $fwrite(uart_log_fd, "%s\n", line);
+                $fflush(uart_log_fd);
+            end
+            if (str_matches_any(line, uart_fail_str)) begin
+                $error("TB: UART matched a failure pattern -- test FAILED");
+                $fatal;
+            end
+            if (str_matches_any(line, uart_pass_str)) begin
+                $display("TB: UART matched \"%s\" -- test PASSED", uart_pass_str);
+                $finish;
+            end
         end
     endfunction
 
+`ifdef ECE411_LINUX
+    // Tap the UART peripheral itself rather than RVFI.  monitor_mem_addr is
+    // driven from IEUAdrW, which is a *virtual* address, so the RVFI snoop below
+    // stops matching UART_THR_ADDR the moment Linux turns on the MMU -- the
+    // console goes silent exactly when the boot gets interesting.  Watching the
+    // peripheral's own write strobe is physical by construction and works in
+    // every privilege mode.
+    //
+    // The strobe sits high for two PCLK cycles because the AHB-to-APB bridge
+    // holds PENABLE an extra cycle; that is why the CVW model's own $write
+    // prints every character twice.  Taking the rising edge yields exactly one
+    // byte per store.
+    wire       uart_we_level = ~dut.soc.uncoregen.uncore.uartgen.uart.uartPC.MEMWb &
+                               (dut.soc.uncoregen.uncore.uartgen.uart.uartPC.A == 3'b000) &
+                               ~dut.soc.uncoregen.uncore.uartgen.uart.uartPC.DLAB;
+    logic      uart_we_level_q;
+    always @(posedge clk) uart_we_level_q <= rst ? 1'b0 : uart_we_level;
+
+    wire       uart_ch_valid = uart_we_level & ~uart_we_level_q;
+    wire [7:0] uart_ch_data  = dut.soc.uncoregen.uncore.uartgen.uart.uartPC.Din;
+`else
+    wire       uart_ch_valid = mon_itf.valid[0] && mon_itf.mem_wmask[0][0] &&
+                               mon_itf.mem_addr[0] == UART_THR_ADDR;
+    wire [7:0] uart_ch_data  = mon_itf.mem_wdata[0][7:0];
+`endif
+
     always @(posedge clk) begin
-        if (!rst && mon_itf.valid[0] && mon_itf.mem_wmask[0][0] &&
-                mon_itf.mem_addr[0] == UART_THR_ADDR) begin
-            automatic logic [7:0] uart_ch = mon_itf.mem_wdata[0][7:0];
+        if (!rst && uart_ch_valid) begin
+            automatic logic [7:0] uart_ch = uart_ch_data;
             if (uart_ch == 8'h0A) begin
                 uart_flush_line();
             end else if (uart_ch != 8'h0D) begin
@@ -88,7 +192,6 @@
 
     // Interrupt/trap accounting: distinguishes "the program deadlocked" from
     // "the timer tick never arrived", which look identical from the PC trace.
-    longint unsigned  sim_cycle       = 0;
     longint unsigned  intr_count      = 0;
     longint unsigned  trap_count      = 0;
     longint unsigned  last_intr_cycle = 0;

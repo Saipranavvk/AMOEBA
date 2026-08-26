@@ -1,0 +1,64 @@
+# Builds the Linux boot image and publishes it as an artifact.
+#
+# Deliberately separate from the nightly boot job.  Fetching and building a
+# kernel takes 10-30 minutes, and on a GitHub-hosted runner that would come
+# straight out of the boot's simulation budget against the 6-hour job ceiling.
+# The boot job downloads this artifact instead.
+name: Linux Boot Image
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'testcode/linux/**'
+      - 'bin/linux_image_to_lst.py'
+      - '.github/workflows/linux-image.yml'
+
+jobs:
+  build-image:
+    name: Build boot.lst (Linux 6.6 + OpenSBI 1.4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3 gcc g++ make curl xz-utils \
+            bc bison flex libssl-dev libelf-dev device-tree-compiler cpio
+
+      # The kernel cross toolchain, sources and checksums are all pinned inside
+      # testcode/linux/Makefile, so this cache key only has to track that file.
+      - name: Cache downloads
+        uses: actions/cache@v4
+        with:
+          path: testcode/linux/build/dl
+          key: linux-dl-${{ hashFiles('testcode/linux/Makefile') }}
+
+      - name: Build boot image
+        run: make -C testcode/linux
+
+      - name: Record image provenance
+        run: |
+          cd testcode/linux/build
+          sha256sum boot.lst boot_shim.bin amoeba.dtb > boot.sha256
+          {
+            echo "linux:   6.6"
+            echo "opensbi: 1.4"
+            echo "commit:  ${GITHUB_SHA}"
+          } > boot.provenance
+          cat boot.sha256 boot.provenance
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: amoeba-linux-boot-image
+          path: |
+            testcode/linux/build/boot.lst
+            testcode/linux/build/amoeba.dtb
+            testcode/linux/build/boot.sha256
+            testcode/linux/build/boot.provenance
+          retention-days: 30
+          compression-level: 9

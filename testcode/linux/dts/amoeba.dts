@@ -1,0 +1,124 @@
+/dts-v1/;
+
+/*
+ * Device tree for the AMOEBA CVW SoC as it exists in RTL simulation.
+ *
+ * Derived from third_party/cvw/linux/devicetree/wally-virt.dts, whose memory
+ * map already matches pkg/config.vh exactly: 256 MB of RAM at 0x80000000, an
+ * ns16550a at 0x10000000, PLIC at 0x0c000000 and CLINT at 0x02000000.
+ *
+ * Two things differ from the FPGA/QEMU trees, both to make a boot finish in a
+ * simulator rather than on real silicon:
+ *
+ *   timebase-frequency  Must be the truth: 100 MHz, one MTIME tick per system
+ *                       clock.  Declaring 1 MHz was tried, to make jiffy- and
+ *                       udelay-based waits 100x cheaper in simulated cycles.
+ *                       It livelocks the kernel.  Understating the rate makes
+ *                       the kernel's nanosecond 100x longer than the hardware's,
+ *                       so every hrtimer it programs has already expired by the
+ *                       time clockevents_program_event() returns; the timer ISR
+ *                       re-fires immediately and the boot makes no forward
+ *                       progress.  It starts the instant the kernel switches to
+ *                       riscv_clocksource, and a PC profile shows ~100% of time
+ *                       in ktime_get / hrtimer_interrupt / do_irq.
+ *
+ *   no5lvl no4lvl       Linux probes SATP for Sv57, then Sv48, then Sv39 and
+ *                       keeps the deepest the hardware accepts.  CVW accepts
+ *                       all three, so an unhinted kernel picks Sv57 and pays a
+ *                       five-level page walk on every TLB miss.  These force
+ *                       Sv39 and its three-level walk instead.
+ */
+
+#ifndef AMOEBA_TIMEBASE_HZ
+#define AMOEBA_TIMEBASE_HZ 1000000
+#endif
+
+/ {
+  #address-cells = <0x02>;
+  #size-cells = <0x02>;
+  compatible = "amoeba,cvw";
+  model = "amoeba-cvw-sim";
+
+  chosen {
+    bootargs = "console=ttyS0 earlycon=uart8250,mmio,0x10000000 no5lvl no4lvl loglevel=7 rdinit=/init";
+    stdout-path = "/soc/uart@10000000";
+    /* Seeds the kernel RNG immediately.  Without it the boot gathers
+     * entropy the slow way.  A fixed seed is correct here and nowhere
+     * else: this is a deterministic simulation, not a real machine. */
+    rng-seed = <0x414d4f45 0x42410001 0x0badc0de 0xfeedface
+                0x13572468 0x8642097b 0xc0ffee11 0x5a5a5a5a>;
+  };
+
+  memory@80000000 {
+    device_type = "memory";
+    reg = <0x00 0x80000000 0x00 0x10000000>;   /* matches EXT_MEM in pkg/config.vh */
+  };
+
+  cpus {
+    #address-cells = <0x01>;
+    #size-cells = <0x00>;
+    clock-frequency = <100000000>;
+    timebase-frequency = <AMOEBA_TIMEBASE_HZ>;
+
+    cpu@0 {
+      phandle = <0x01>;
+      device_type = "cpu";
+      reg = <0x00>;
+      status = "okay";
+      compatible = "riscv";
+      /*
+       * Both forms are present on purpose.  Linux 6.6 prefers the structured
+       * riscv,isa-base + riscv,isa-extensions pair, but OpenSBI 1.4 reads only
+       * the legacy riscv,isa string -- fdt_parse_isa_all_harts() returns
+       * SBI_ENOENT without it, which aborts sbi_hart_init() and hangs the
+       * firmware in sbi_hart_hang() before the console is even up.  CVW's own
+       * device trees omit it because they target a newer OpenSBI.
+       */
+      riscv,isa = "rv64imafdc_zicsr_zifencei_zicntr_zihpm_zicbom_zicboz_zicond_zba_zbb_zbc_zbs_zbkb_zbkc_zbkx_zknd_zkne_zknh_zkt_zfh_zfa_zca_zcb_zcd_sstc_svinval_svnapot_svpbmt_svade_svadu";
+      riscv,isa-base = "rv64i";
+      riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "sstc", "svade", "svadu", "svinval", "svnapot", "svpbmt", "zba", "zbb", "zbc", "zbs", "zca", "zcb", "zcd", "zfa", "zfh", "zkn", "zkt", "zicbom", "zicboz", "zicntr", "zicond", "zicsr", "zifencei", "zihpm";
+      riscv,cboz-block-size = <64>;
+      riscv,cbom-block-size = <64>;
+      mmu-type = "riscv,sv39";
+
+      interrupt-controller {
+        #interrupt-cells = <0x01>;
+        interrupt-controller;
+        compatible = "riscv,cpu-intc";
+        phandle = <0x02>;
+      };
+    };
+  };
+
+  soc {
+    #address-cells = <0x02>;
+    #size-cells = <0x02>;
+    compatible = "simple-bus";
+    ranges;
+
+    uart@10000000 {
+      interrupts = <0x0a>;
+      interrupt-parent = <0x03>;
+      clock-frequency = <0x384000>;
+      reg = <0x00 0x10000000 0x00 0x100>;
+      compatible = "ns16550a";
+    };
+
+    plic@c000000 {
+      phandle = <0x03>;
+      riscv,ndev = <0x35>;
+      reg = <0x00 0xc000000 0x00 0x210000>;
+      interrupts-extended = <0x02 0x0b 0x02 0x09>;
+      interrupt-controller;
+      compatible = "sifive,plic-1.0.0\0riscv,plic0";
+      #interrupt-cells = <0x01>;
+      #address-cells = <0x00>;
+    };
+
+    clint@2000000 {
+      interrupts-extended = <0x02 0x03 0x02 0x07>;
+      reg = <0x00 0x2000000 0x00 0x10000>;
+      compatible = "sifive,clint0\0riscv,clint0";
+    };
+  };
+};
