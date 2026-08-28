@@ -1,0 +1,164 @@
+# Keystone enclave boot test.
+#
+# Boots Linux 6.6 under the Keystone security monitor on the CVW core and
+# requires that the enclave device be usable from userspace.
+#
+# Two milestones, one image, selected by the pass string.  Measured on a
+# 20-core desktop:
+#
+#   K0  "[SM] Keystone security monitor has been initialized!"
+#         4,054,809 cycles /    27 s -- SM init, PMP regions configured
+#   K1  "AMOEBA_KEYSTONE_DRV_OK"
+#       213,109,912 cycles / 1,329 s -- /dev/keystone_enclave opens
+#
+# K1 costs under 0.5% more than the plain Linux boot (212.1M cycles): the SM's
+# work is front-loaded before the kernel and the driver is one misc_register().
+#
+# A GitHub-hosted runner has slower cores, so assume 1.5-2x.  The simulation is
+# single-threaded (--threads 1), so runner core *count* does not help.
+name: Keystone Boot
+
+on:
+  schedule:
+    # 09:00 UTC, deliberately offset from linux-boot.yml at 07:00.  Both are
+    # long single-threaded jobs; overlapping them makes both slower and the
+    # timings harder to compare.
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+    inputs:
+      milestone:
+        description: 'UART string that ends the run (see testcode/keystone/README.md)'
+        required: false
+        default: 'AMOEBA_KEYSTONE_DRV_OK'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'testcode/keystone/**'
+      - 'testcode/linux/dts/**'
+      - 'testcode/linux/configs/**'
+      - 'patches/keystone-sm-amoeba-platform.patch'
+      - 'bin/linux_image_to_lst.py'
+      - 'hdl/**'
+      - 'hvl/**'
+      - 'sim/Makefile'
+      - '.github/workflows/keystone-boot.yml'
+
+# gh run list / gh run download need actions:read.
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  boot:
+    name: Boot under the security monitor
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Fetch riscv-formal submodule
+        run: git submodule update --init third_party/riscv-formal
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3 python3-pip gcc g++ make \
+            autoconf flex bison libfl-dev help2man zlib1g-dev patch
+          pip3 install --quiet pyyaml
+
+      - name: Cache Verilator v5.026
+        id: cache-verilator
+        uses: actions/cache@v4
+        with:
+          path: /opt/verilator
+          key: verilator-5.026-${{ runner.os }}
+
+      - name: Build Verilator v5.026 from source
+        if: steps.cache-verilator.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/verilator/verilator --branch v5.026 --depth=1 /tmp/verilator-src
+          cd /tmp/verilator-src && autoconf
+          ./configure --prefix=/opt/verilator
+          make -j$(nproc)
+          make install
+
+      - name: Add Verilator to PATH
+        run: echo "/opt/verilator/bin" >> $GITHUB_PATH
+
+      # Built by .github/workflows/keystone-image.yml.
+      - name: Download boot image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p testcode/keystone/build
+          # The image must come from this branch.  An unscoped lookup takes the
+          # newest success on any branch, so a PR could silently boot main's
+          # image and prove nothing about the change under review.
+          # GITHUB_HEAD_REF is set only for pull_request events; GITHUB_REF_NAME
+          # covers schedule and workflow_dispatch.
+          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          echo "Looking for a Keystone boot image built from branch: $BRANCH"
+          RUN_ID=$(gh run list --repo "$GITHUB_REPOSITORY" \
+                     --branch "$BRANCH" \
+                     --workflow keystone-image.yml --status success \
+                     --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -z "$RUN_ID" ]; then
+            echo "No successful keystone-image.yml run on branch '$BRANCH'."
+            echo "That workflow builds on push when testcode/keystone/** changes;"
+            echo "otherwise run it manually (Actions -> Keystone Boot Image -> Run workflow)."
+            exit 1
+          fi
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name amoeba-keystone-boot-image --dir testcode/keystone/build
+          ls -la testcode/keystone/build
+
+      - name: Show image provenance
+        run: cat testcode/keystone/build/boot.provenance
+
+      # The same simulator the Linux boot uses: Keystone needs identical
+      # testbench behaviour, so reusing it avoids a second Verilator build and
+      # guarantees both tests exercise the same RTL.
+      - name: Build Linux boot simulator
+        run: make -C sim build_linux
+
+      # K0 first: 27 s, and it isolates "the SM did not come up" from "the boot
+      # did not finish".  Without it a K1 failure cannot distinguish the two.
+      - name: 'K0: security monitor initialises'
+        run: |
+          make -C sim linux_boot \
+            LINUX_MEMLST=$PWD/testcode/keystone/build/boot.lst \
+            LINUX_RUN_DIR=verilator/keystone_k0 \
+            LINUX_PASS='[SM] Keystone security monitor has been initialized' \
+            LINUX_FAIL='intolerable error|platform global init fatal|Kernel panic|SBI panic' \
+            LINUX_TIMEOUT=30000000
+
+      # 400M cycles is ~1.9x the measured 213.1M, so a genuine hang fails in
+      # reasonable time rather than burning to the job ceiling.
+      - name: 'K1: enclave device opens from userspace'
+        env:
+          MILESTONE: ${{ github.event.inputs.milestone || 'AMOEBA_KEYSTONE_DRV_OK' }}
+        run: |
+          make -C sim linux_boot \
+            LINUX_MEMLST=$PWD/testcode/keystone/build/boot.lst \
+            LINUX_RUN_DIR=verilator/keystone_k1 \
+            LINUX_PASS="$MILESTONE" \
+            LINUX_FAIL='AMOEBA_KEYSTONE_DRV_FAIL|misc_register() failed|Kernel panic|Unable to handle kernel|Oops:|SBI panic' \
+            LINUX_TIMEOUT=400000000
+
+      - name: Milestone timing report
+        if: always()
+        run: |
+          python3 testcode/linux/boot_report.py \
+            sim/verilator/keystone_k1/simulation.log || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: keystone-boot-logs
+          path: |
+            sim/verilator/keystone_k0/simulation.log
+            sim/verilator/keystone_k1/simulation.log
+            sim/verilator/keystone_k1/boot_uart.log
+          retention-days: 14
