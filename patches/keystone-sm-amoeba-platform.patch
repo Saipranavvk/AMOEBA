@@ -1,0 +1,34 @@
+keystone sm: register the AMOEBA CVW platform override
+
+OpenSBI picks a platform_override module by matching the device tree root
+node's compatible string.  Keystone's generic override lists only QEMU's
+"riscv-virtio" and "riscv-virtio,qemu", so on our board the module is never
+selected, generic_final_init() never runs, and sm_init() is never called.
+
+The failure is silent and looks like success: the SM object code links into
+the firmware, OpenSBI boots normally, Linux boots normally, and the only
+symptom is that no [SM] line ever appears on the console.  Verified before
+this patch -- fw_payload.elf contained sbi_sm_create_enclave, attest_enclave
+and the sanctum key region, yet the SM never initialised.
+
+Adds "amoeba,cvw", matching the root compatible in
+testcode/linux/dts/amoeba.dts.
+
+--- a/sm/plat/generic/generic.c
++++ b/sm/plat/generic/generic.c
+@@ -13,6 +13,15 @@
+ static const struct fdt_match generic_match[] = {
+ 	{ .compatible = "riscv-virtio" },
+ 	{ .compatible = "riscv-virtio,qemu" },
++	/*
++	 * AMOEBA CVW SoC.  OpenSBI selects a platform_override module by
++	 * matching the root node's compatible string, so without an entry here
++	 * generic_final_init() is never called, sm_init() never runs, and the
++	 * SM is silently linked-but-dead: the firmware boots, Linux boots, and
++	 * nothing reports an error.  Keystone upstream only ever targeted QEMU
++	 * and real boards, so this list has no wildcard.
++	 */
++	{ .compatible = "amoeba,cvw" },
+ 	{ },
+ };
+ 
