@@ -32,15 +32,25 @@ get_license DC-Ultra-Opt
 set repo_root [getenv REPO_ROOT]
 lappend search_path "$repo_root/pkg" "$repo_root/third_party/cvw/src" "$repo_root/third_party/cvw/config/rv64gc"
 
+# Verilog defines that pick the pkg/ parameter set, set by synth/Makefile from
+# CONFIG.  Empty means the default pkg/config.vh, so pass no -define at all --
+# analyze rejects an empty define list.
+set config_defines [getenv ECE411_CONFIG_DEFINES]
+if {$config_defines ne ""} {
+   set analyze_defines [list -define $config_defines]
+} else {
+   set analyze_defines [list]
+}
+
 set pkg_src [getenv PKG_SRCS]
 
 if {$pkg_src ne ""} {
-   analyze -library WORK -format sverilog $pkg_src
+   eval analyze -library WORK -format sverilog $analyze_defines [list $pkg_src]
 }
 
 set modules [split [getenv HDL_SRCS] " "]
 foreach module $modules {
-   analyze -library WORK -format sverilog "${module}"
+   eval analyze -library WORK -format sverilog $analyze_defines [list $module]
 }
 
 elaborate $design_toplevel

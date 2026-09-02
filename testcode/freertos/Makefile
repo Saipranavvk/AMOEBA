@@ -21,6 +21,7 @@ PROG ?= $(abspath sorting_algo_app.c)
 # ---- Toolchain ----
 CC      := $(firstword $(foreach t,riscv64-unknown-elf-gcc riscv64-elf-gcc,$(if $(shell which $(t) 2>/dev/null),$(t))))
 OBJDUMP := $(firstword $(foreach t,riscv64-unknown-elf-objdump riscv64-elf-objdump,$(if $(shell which $(t) 2>/dev/null),$(t))))
+OBJCOPY := $(firstword $(foreach t,riscv64-unknown-elf-objcopy riscv64-elf-objcopy,$(if $(shell which $(t) 2>/dev/null),$(t))))
 
 # ---- ISA: rv64imac (no FPU, matches AMOEBA amoeba config) ----
 MARCH := rv64imac_zicsr
@@ -45,7 +46,34 @@ INC := -I$(abspath .) \
        -I$(FREERTOS_PORT_CHIP) \
        $(_STUB_INC)
 
-LDFLAGS := -Tfreertos_wally.ld \
+# ---- Target: simulation (default) or the PYNQ-Z2 FPGA ----
+#
+# TARGET=pynq differs in two ways that both matter and neither of which is
+# cosmetic:
+#
+#   - the linker script.  Simulation memory is 128 MB, so tohost at RAM+8 MB and
+#     a stack at RAM+128 MB are real addresses.  The FPGA has 128 KiB of block
+#     RAM and amoeba_mem_bram truncates rather than faulting, so those addresses
+#     alias back onto the reset vector.  See freertos_pynq.ld.
+#
+#   - the clock.  mtime advances once per CPU cycle, so configCPU_CLOCK_HZ has
+#     to be the clock the core is actually running at: FCLK_CLK0, not the
+#     simulation's 100 MHz.  Keep FPGA_CLOCK_HZ in step with FCLK_MHZ in
+#     fpga/pynq/Makefile.
+TARGET ?= sim
+FPGA_CLOCK_HZ ?= 25000000
+
+ifeq ($(TARGET),sim)
+  LDSCRIPT  := freertos_wally.ld
+  TARGET_CFLAGS :=
+else ifeq ($(TARGET),pynq)
+  LDSCRIPT  := freertos_pynq.ld
+  TARGET_CFLAGS := -DconfigCPU_CLOCK_HZ=$(FPGA_CLOCK_HZ)
+else
+  $(error TARGET=$(TARGET) is not known -- use sim or pynq)
+endif
+
+LDFLAGS := -T$(LDSCRIPT) \
            -Wl,--gc-sections \
            -Wl,--build-id=none
 
@@ -66,11 +94,24 @@ APP_SRCS := freertos_main.c $(PROG)
 ALL_SRCS := $(BSP_SRCS) $(FREERTOS_SRCS) $(APP_SRCS)
 
 ELF := freertos_wally.elf
+BIN := $(ELF:.elf=.bin)
 
 # ====================================================================
-.PHONY: build clean
+.PHONY: build bin clean
 
 build: $(ELF) $(SIM_DIR)/bin/memory_8.lst
+
+# Flat image for the FPGA loader.  Only the file-backed sections: crt0 zeroes
+# .bss itself, so this is ~10 KiB rather than the 79 KiB memory footprint.
+# The load address is ORIGIN(RAM), so the PS writes this at offset 0 of the
+# image window.
+bin: $(BIN)
+
+$(BIN): $(ELF)
+	$(OBJCOPY) -O binary \
+	    --only-section=.text --only-section=.rodata \
+	    --only-section=.data --only-section=.tdata $< $@
+	@echo "flat image: $$(stat -c %s $@) bytes -> load at ORIGIN(RAM)"
 
 $(FREERTOS_KERNEL_DIR)/tasks.c:
 	@echo ""
@@ -79,12 +120,12 @@ $(FREERTOS_KERNEL_DIR)/tasks.c:
 	@echo ""
 	@exit 1
 
-$(ELF): $(FREERTOS_KERNEL_DIR)/tasks.c $(ALL_SRCS) freertos_wally.ld
-	$(CC) $(CFLAGS) $(INC) $(LDFLAGS) -o $@ $(ALL_SRCS)
+$(ELF): $(FREERTOS_KERNEL_DIR)/tasks.c $(ALL_SRCS) $(LDSCRIPT)
+	$(CC) $(CFLAGS) $(TARGET_CFLAGS) $(INC) $(LDFLAGS) -o $@ $(ALL_SRCS)
 	$(OBJDUMP) -S -D $@ > $(ELF:.elf=.dis)
 
 $(SIM_DIR)/bin/memory_8.lst: $(ELF)
 	python3 $(BIN_DIR)/generate_memory_file.py -8 $<
 
 clean:
-	rm -rf $(ELF) $(ELF:.elf=.dis) dump.fst
+	rm -rf $(ELF) $(ELF:.elf=.dis) $(BIN) dump.fst

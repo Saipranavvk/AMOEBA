@@ -39,16 +39,60 @@ void uartSend(char c)
 
 /* ---- Exit via HTif tohost ---- */
 
+/*
+ * Force the dirty tohost line out of the D-cache by conflict eviction.
+ *
+ * CVW's D-cache is write-back, so the store in tohost_exit() stays dirty in
+ * cache and never reaches the bus on its own -- and the bus is the only place
+ * the testbench (or, on FPGA, the PL bus monitor) can see it.
+ *
+ * This used to be a single cbo.flush, hand-encoded to dodge the assembler's
+ * ISA check.  That made the exit path depend on Zicbom, which
+ * pkg/config_baremetal_linux.vh -- the tapeout config -- does not implement,
+ * so the whole FreeRTOS tier silently lost its pass/fail channel there.  Rather
+ * than add an ISA extension to silicon for a test hook, evict the line the way
+ * any cache lets you: read enough addresses that map to the same set.
+ *
+ * Why this works on every configuration, without knowing the geometry.  The
+ * linker fixes tohost at 0x80800000 and RAM starts at 0x80000000, so tohost's
+ * offset from the RAM base is 8 MB.  For any power-of-two way size W <= 8 MB
+ * that makes tohost's set index zero, and every address at RAM_BASE + k*W has
+ * that same index.  Reading RAM_BASE + k*SWEEP_STRIDE for k = 0..SWEEP_N-1
+ * therefore lands SWEEP_N*SWEEP_STRIDE/W distinct tags in tohost's set:
+ *
+ *     way size 512 B  ->  128 conflicts     (config_baremetal_linux: 1 way)
+ *     way size 4 KiB  ->   16 conflicts     (config.vh, config_freertos: 4 ways)
+ *     way size 64 KiB ->    1 conflict
+ *
+ * Any of those exceeds the associativity it is paired with, so the dirty line
+ * is guaranteed out.  The swept range is the first 64 KiB of RAM, which is the
+ * program image itself -- always mapped, always safe to read, and distinct from
+ * tohost in the tag bits.
+ *
+ * Cost is SWEEP_N misses, a few thousand cycles, once per test run.
+ */
+#define RAM_BASE      0x80000000UL
+#define SWEEP_STRIDE  512UL           /* smallest way size any config uses */
+#define SWEEP_N       128UL           /* 64 KiB swept: covers way sizes to 64 KiB */
+
+static void htif_writeback(void)
+{
+    /* Order the tohost store ahead of the sweep loads. */
+    asm volatile ("fence rw, rw" ::: "memory");
+
+    for (unsigned long k = 0; k < SWEEP_N; k++) {
+        volatile const uint64_t *p =
+            (volatile const uint64_t *)(RAM_BASE + k * SWEEP_STRIDE);
+        (void)*p;
+    }
+
+    asm volatile ("fence rw, rw" ::: "memory");
+}
+
 void __attribute__((noreturn)) tohost_exit(uintptr_t code)
 {
     tohost = (code << 1) | 1;
-    /* CVW's D-cache is write-back; the SD above stays dirty in cache and
-     * never reaches the AHB bus unless explicitly evicted.  cbo.flush
-     * (Zicbom, imm=2) writes the dirty cache line back to AHB so the
-     * testbench can observe the write on mem_itf.  Using .insn bypasses
-     * assembler ISA-extension checks. */
-    asm volatile (".insn i 0xF, 2, zero, %0, 2"
-                  : : "r" ((uintptr_t)&tohost) : "memory");
+    htif_writeback();
     while (1);
 }
 

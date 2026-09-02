@@ -215,7 +215,7 @@ localparam logic SVADU_SUPPORTED   = 0;
 // external AHB port.  The caches are not required to boot, but with them off
 // every fetch and every page-table walk becomes an AHB round trip through a
 // 3-cycle behavioral memory, and a boot is hundreds of millions of
-// instructions.  They stay, at minimum size (see below).
+// instructions.  They stay -- see the geometry below.
 localparam logic BUS_SUPPORTED = 1;
 localparam logic DCACHE_SUPPORTED = 1;
 localparam logic ICACHE_SUPPORTED = 1;
@@ -234,29 +234,44 @@ localparam DTLB_ENTRIES = 32'd8;
 // Cache configuration.  Sizes should be a power of two
 // typical configuration 4 ways, 4096 bytes per way, 256 bit or more lines
 //
-// Smallest cache CVW sanctions: 1 way x 512 bytes, which is what its own
-// synthesis-trimmed derivatives use (syn_rv32e and friends in
-// config/derivlist.txt).  512 bytes total per cache, direct mapped.
+// 4 ways x 4 KiB = 16 KiB each, which is CVW's own rv64gc geometry.
 //
-// The line length deliberately does NOT shrink with the capacity, which is the
-// counterintuitive part.  Capacity is NUMWAYS x WAYSIZEINBYTES and does not
-// depend on the line at all; the line only sets how that capacity is divided.
-// At 512-bit lines this is 8 lines of 64 bytes and 8 tags; at 128-bit lines it
-// would be 32 lines of 16 bytes and 32 tags, tripling the tag array to hold
-// exactly the same data.  Long lines are the cheaper way to be small.
-// 512 bits is also the floor for CACHE_SRAMLEN = 128 to divide evenly and for
-// the AHB burst to stay at 8 beats of AHBW.
+// This replaces a 1 x 512 B direct-mapped pair that was chosen to minimise area
+// before there was a real area number.  Both halves of that trade are now
+// measured rather than estimated:
 //
-// Cost: this is 8 lines of instructions and 8 of data, direct mapped, for a
-// kernel whose hot loops do not come close to fitting.  Expect the boot to run
-// several times longer than the 212M cycles the main config takes, and raise
-// LINUX_TIMEOUT accordingly.  DCACHE/ICACHE_NUMWAYS and WAYSIZEINBYTES are the
-// first knobs to turn if that matters more than the area.
-localparam DCACHE_NUMWAYS = 32'd1;
-localparam DCACHE_WAYSIZEINBYTES = 32'd512;
+//   area   1 x 512 B: 11,119 LUT6 of the XC7Z020's 53,200 (20.9%),  8 BRAM36
+//          4 x 4 KiB: 15,068 LUT6                         (28.3%), 72 BRAM36
+//          Fmax 38.4 -> 33.3 MHz, against a 25 MHz target.
+//
+//   speed  Linux boot to userspace, Verilator:
+//          1 x 512 B: 556,270,738 cycles
+//          4 x 4 KiB: 216,588,366 cycles   -- 2.57x faster, IPC 0.326
+//          FreeRTOS regression 5/5 at both.
+//
+// 7.4 points of LUT and 64 block RAM tiles for 2.57x. The block RAM figure is
+// an FPGA packaging artifact and does not transfer: CACHE_SRAMLEN = 128 splits
+// each way into 256 x 128 subarrays, and a RAMB36 wants 512 x 72, so each one
+// is half wasted. In silicon these are SRAM macros sized to what they hold.
+//
+// 4 KiB is also the ceiling, not an arbitrary pick: the caches are virtually
+// indexed and physically tagged, so index + offset must fit inside the SV39
+// page offset or two virtual addresses aliasing to one physical page can land
+// in different sets.  Way size <= page size = 4096 B is what makes that safe,
+// and capacity beyond it has to come from ways.
+//
+// The line length deliberately does not scale with capacity.  Capacity is
+// NUMWAYS x WAYSIZEINBYTES and does not depend on the line at all; the line
+// only sets how that capacity is divided.  At 512-bit lines a 4 KiB way is 64
+// lines of 64 bytes and 64 tags; at 128-bit lines it would be 256 lines and
+// four times the tag array holding exactly the same data.  512 bits is also the
+// floor for CACHE_SRAMLEN = 128 to divide evenly and for the AHB burst to stay
+// at 8 beats of AHBW.
+localparam DCACHE_NUMWAYS = 32'd4;
+localparam DCACHE_WAYSIZEINBYTES = 32'd4096;
 localparam DCACHE_LINELENINBITS = 32'd512;
-localparam ICACHE_NUMWAYS = 32'd1;
-localparam ICACHE_WAYSIZEINBYTES = 32'd512;
+localparam ICACHE_NUMWAYS = 32'd4;
+localparam ICACHE_WAYSIZEINBYTES = 32'd4096;
 localparam ICACHE_LINELENINBITS = 32'd512;
 localparam CACHE_SRAMLEN = 32'd128;
 

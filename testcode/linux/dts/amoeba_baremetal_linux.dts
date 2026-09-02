@@ -1,0 +1,136 @@
+/dts-v1/;
+
+/*
+ * Device tree for CONFIG=baremetal_linux -- pkg/config_baremetal_linux.vh.
+ *
+ * Forked from dts/amoeba.dts, which describes the full pkg/config.vh core.
+ * Everything about the memory map, the timebase reasoning and the no5lvl/no4lvl
+ * hints carries over unchanged; see that file for why those are the way they
+ * are.  What differs, and only what differs, is commented below.
+ *
+ * The rule this file exists to satisfy: the device tree must not advertise a
+ * single extension the core does not implement.  Linux believes it.  Advertise
+ * f/d and the kernel enables FS in sstatus and faults on the first FP context
+ * switch; advertise zicbom and it issues cbo.clean on DMA paths; advertise a
+ * PLIC and it drives one that is not there.
+ *
+ * configs/linux_amoeba_baremetal_linux.config is the other half of this and has
+ * to stay in sync -- the kernel gates some features on the config symbol and
+ * some on the string here.
+ */
+
+#ifndef AMOEBA_TIMEBASE_HZ
+#define AMOEBA_TIMEBASE_HZ 1000000
+#endif
+
+/ {
+  #address-cells = <0x02>;
+  #size-cells = <0x02>;
+  compatible = "amoeba,cvw";
+  model = "amoeba-cvw-baremetal-linux";
+
+  chosen {
+    /*
+     * Same as the full config, minus nothing: earlycon still matters most in
+     * the window between kernel entry and console handover.  no5lvl/no4lvl are
+     * kept even though SV48_SUPPORTED = SV57_SUPPORTED = 0 make the SATP probe
+     * fail on its own -- the hints skip the probe rather than failing it.
+     */
+    bootargs = "console=ttyS0 earlycon=uart8250,mmio,0x10000000 no5lvl no4lvl loglevel=7 rdinit=/init";
+    stdout-path = "/soc/uart@10000000";
+    /* Fixed seed: this is a deterministic simulation, not a real machine. */
+    rng-seed = <0x414d4f45 0x42410001 0x0badc0de 0xfeedface
+                0x13572468 0x8642097b 0xc0ffee11 0x5a5a5a5a>;
+  };
+
+  memory@80000000 {
+    device_type = "memory";
+    reg = <0x00 0x80000000 0x00 0x10000000>;   /* EXT_MEM: 256 MB at 0x80000000 */
+  };
+
+  cpus {
+    #address-cells = <0x01>;
+    #size-cells = <0x00>;
+    clock-frequency = <100000000>;
+    timebase-frequency = <AMOEBA_TIMEBASE_HZ>;
+
+    cpu@0 {
+      phandle = <0x01>;
+      device_type = "cpu";
+      reg = <0x00>;
+      status = "okay";
+      compatible = "riscv";
+
+      /*
+       * Cut to exactly what pkg/config_baremetal_linux.vh implements.
+       *
+       * Both forms are still present for the same reason as the parent tree:
+       * Linux 6.6 prefers riscv,isa-base + riscv,isa-extensions, but OpenSBI
+       * 1.4's fdt_parse_isa_all_harts() reads only the legacy riscv,isa string
+       * and returns SBI_ENOENT without it, hanging the firmware in
+       * sbi_hart_hang() before the console is up.
+       *
+       * Gone relative to dts/amoeba.dts, each because its _SUPPORTED is 0:
+       *   f d zfh zfa      no FPU
+       *   zba zbb zbc zbs  no bit manipulation
+       *   zbkb zbkc zbkx zknd zkne zknh zkt   no scalar crypto
+       *   zcb zcd          Zcb needs B, Zcd needs D
+       *   zicond           no integer conditional ops
+       *   zicntr zihpm     no counters (COUNTERS = 0)
+       *   zicbom zicboz    no cache-block operations
+       *   sstc             kernel sets its timer through the SBI TIME extension
+       *   svinval svnapot svpbmt   see the config
+       *   svade svadu      Svadu is absent; Svade is the fallback and Linux
+       *                    handles it by setting A/D in the fault handler.
+       *                    Listing "svadu" here would be a lie the kernel acts
+       *                    on; listing "svade" is unnecessary and Linux 6.6
+       *                    does not parse it.
+       *
+       * Kept: i m a c, and zicsr/zifencei which ZICSR_SUPPORTED and
+       * ZIFENCEI_SUPPORTED both leave on.  "a" covers Zaamo + Zalrsc, which
+       * this config has in full.
+       */
+      riscv,isa = "rv64imac_zicsr_zifencei";
+      riscv,isa-base = "rv64i";
+      riscv,isa-extensions = "i", "m", "a", "c", "zicsr", "zifencei";
+
+      /* riscv,cbom-block-size and riscv,cboz-block-size deliberately absent:
+       * advertising a block size is how the kernel decides Zicbom is usable. */
+
+      mmu-type = "riscv,sv39";
+
+      interrupt-controller {
+        #interrupt-cells = <0x01>;
+        interrupt-controller;
+        compatible = "riscv,cpu-intc";
+        phandle = <0x02>;
+      };
+    };
+  };
+
+  soc {
+    #address-cells = <0x02>;
+    #size-cells = <0x02>;
+    compatible = "simple-bus";
+    ranges;
+
+    /*
+     * PLIC_SUPPORTED = 0, so there is no plic node and this uart carries no
+     * interrupts / interrupt-parent property.  The 8250 driver falls back to
+     * polling, which is all a console that only prints needs.  The timer and
+     * software interrupts Linux actually depends on are core-local and come
+     * from the CLINT below, not the PLIC.
+     */
+    uart@10000000 {
+      clock-frequency = <0x384000>;
+      reg = <0x00 0x10000000 0x00 0x100>;
+      compatible = "ns16550a";
+    };
+
+    clint@2000000 {
+      interrupts-extended = <0x02 0x03 0x02 0x07>;
+      reg = <0x00 0x2000000 0x00 0x10000>;
+      compatible = "sifive,clint0\0riscv,clint0";
+    };
+  };
+};

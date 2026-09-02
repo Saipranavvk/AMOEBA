@@ -5,9 +5,11 @@
 
 /*
  * tohost_exit() is implemented in syscalls_amoeba.c.
- * It writes (code<<1)|1 to the HTif tohost address and does a
- * cbo.flush to evict the cache line (required for CVW's write-back cache).
- * The testbench tohost monitor fires $finish (code==0) or $fatal (code!=0).
+ * It writes (code<<1)|1 to the HTif tohost address, then forces that line out
+ * of CVW's write-back D-cache by conflict eviction so the write actually
+ * reaches the bus -- see htif_writeback() there for why it is a sweep and not
+ * a cbo.flush.  The testbench tohost monitor fires $finish (code==0) or
+ * $fatal (code!=0).
  */
 extern void __attribute__((noreturn)) tohost_exit(uintptr_t code);
 

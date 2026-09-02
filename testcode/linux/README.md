@@ -18,12 +18,41 @@ of them, continuously, for hundreds of millions of cycles.
 Makefile                 image build: shim + OpenSBI + kernel + initramfs
 boot_shim.S              reset-vector entry; sets a0=hartid, jumps to firmware
 uart_smoke.S             console-path pre-flight (no firmware needed)
-dts/amoeba.dts           device tree; forked from cvw/linux/devicetree/wally-virt.dts
-configs/linux_amoeba.config   kernel fragment merged over riscv defconfig
+dts/amoeba.dts                        device tree for pkg/config.vh
+dts/amoeba_baremetal_linux.dts        device tree for pkg/config_baremetal_linux.vh
+configs/linux_amoeba.config           kernel fragment merged over riscv defconfig
+configs/linux_amoeba_baremetal_linux.config   soft-float delta, merged after it
 initramfs/init.S         PID 1: prints the pass string, never exits
 initramfs/initramfs.spec gen_init_cpio spec (creates /dev/console without root)
 build/                   downloads and build products (gitignored)
+build/<config>/          per-CONFIG image, kbuild and OpenSBI output trees
 ```
+
+## Configurations
+
+`CONFIG=` selects which `pkg/` parameter set the image targets, using the same
+names as `sim/Makefile` and `synth/Makefile`:
+
+| `CONFIG=` | Hardware | Image |
+|---|---|---|
+| *(unset)* | `pkg/config.vh` | hard-float RV64GC kernel, `build/boot.lst` |
+| `baremetal_linux` | `pkg/config_baremetal_linux.vh` | soft-float kernel, `build/baremetal_linux/boot.lst` |
+
+The two differ in exactly two files — a kernel config fragment and a device
+tree — and share everything else. **They have to be changed together.** The
+device tree must not advertise an extension the core does not implement: Linux
+believes it, so advertising `f`/`d` makes the kernel enable `FS` in `sstatus`
+and fault on the first FP context switch, and advertising `zicbom` makes it
+issue `cbo.clean`. The kernel gates some features on the config symbol and some
+on the DT string, which is why both halves exist.
+
+Each config builds the kernel and OpenSBI out-of-tree into its own directory, so
+switching between them costs nothing and both images can exist at once. Adding a
+third config means adding one `.config` fragment, one `.dts`, and one branch in
+the Makefile.
+
+`sim/Makefile` picks the matching image automatically — `make -C sim linux_boot
+CONFIG=baremetal_linux` builds and boots `build/baremetal_linux/boot.lst`.
 
 ## Memory layout
 
@@ -53,6 +82,20 @@ make -C testcode/linux
 # Build the simulator, then boot
 make -C sim build_linux
 make -C sim linux_boot
+```
+
+For the pruned config, add `CONFIG=baremetal_linux` to every step — the image,
+the simulator and the run all have to agree:
+
+```bash
+make -C testcode/linux smoke CONFIG=baremetal_linux
+make -C sim linux_boot CONFIG=baremetal_linux \
+     LINUX_MEMLST=$PWD/testcode/linux/build/baremetal_linux/uart_smoke.lst \
+     LINUX_PASS=AMOEBA_UART_OK LINUX_TIMEOUT=400000
+
+make -C testcode/linux CONFIG=baremetal_linux
+make -C sim build_linux CONFIG=baremetal_linux
+make -C sim linux_boot  CONFIG=baremetal_linux
 ```
 
 `make -C sim linux_boot` takes these overrides:

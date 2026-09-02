@@ -1,0 +1,17 @@
+build/
+reports/
+*.jou
+*.log
+.Xil/
+__pycache__/
+*.pyc
+
+# The Vivado project tree -- 154 MB of IP caches, .dcp netlists and generated
+# HDL, every byte of it reproducible from tcl/ and rtl/ by `make bitstream`.
+# What is worth keeping beside it is amoeba.bit, amoeba.hwh, timing.rpt and
+# utilization.rpt, which are the artefacts you cannot regenerate without an
+# hour of Vivado.
+bit/*/proj/
+
+# Program images: built by testcode/freertos with TARGET=pynq.
+images/

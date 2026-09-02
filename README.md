@@ -309,6 +309,10 @@ make freertos
 # Run all tc_*.c FreeRTOS test programs
 make freertos_regression
 
+# Same tests against the pruned FreeRTOS-only hardware config
+# (pkg/config_freertos.vh -- see Pruned Configurations)
+make freertos_regression CONFIG=freertos
+
 # Run a single tc_*.c test (e.g., tc_task_queue):
 make -C ../testcode/freertos build PROG=tc_task_queue.c
 make run_verilator_top_tb_no_spike PROG=../testcode/freertos/freertos_wally.elf
@@ -565,6 +569,58 @@ Notable settings (see the file for the full parameter list):
 | D-cache | 4-way, 4 KiB/way, 512-bit lines | |
 | Branch predictor | GShare, 10-bit index, 6-bit LHR, 16-entry RAS | |
 | Integer divider | 4 bits/cycle | Multi-cycle, stalls E-stage |
+
+### Pruned Configurations
+
+`pkg/config.vh` is the full RV64GC parameter set and the default for every
+tier. Three pruned alternates live beside it, selected by `CONFIG=` on the sim
+and synth Makefiles:
+
+| `CONFIG=` | File | For |
+|---|---|---|
+| *(unset)* | `pkg/config.vh` | baremetal, ISA, Linux, Keystone-Linux |
+| `freertos` | `pkg/config_freertos.vh` | only what `testcode/freertos` executes |
+| `freertos_keystone` | `pkg/config_freertos_keystone.vh` | that, plus the Keystone SM and OpenSBI |
+| `baremetal_linux` | `pkg/config_baremetal_linux.vh` | smallest core that boots a soft-float Linux |
+
+```bash
+make -C sim freertos_regression CONFIG=freertos    # 5/5 pass
+make -C sim linux_boot          CONFIG=baremetal_linux
+make -C synth synth CONFIG=freertos_keystone       # area estimate
+```
+
+Each file carries per-parameter notes on why a feature stayed or went. The
+headline deltas against `pkg/config.vh`:
+
+| | `freertos` | `freertos_keystone` | `baremetal_linux` |
+|---|---|---|---|
+| ISA | RV64IM + Zaamo + Zca + Zicsr + Zicbom | + Zalrsc, Zifencei | RV64IMAC + Zicsr + Zifencei |
+| Privilege | M only | M + S + U | M + S + U |
+| MMU | none | Sv39 + Svadu | Sv39, software A/D |
+| PMP | 0 entries | 16 entries | 0 entries |
+| FPU | removed | removed | removed (SoftFloat) |
+| B / Zkn / Zcb / Zicond | removed | removed | removed |
+| Counters | none | none | none |
+| Zicbom / Zicboz | Zicbom only | Zicbom only | none |
+| I/D cache | 4-way, 4 KiB/way | 4-way, 4 KiB/way | **1-way, 512 B/way** |
+| I/D TLB | n/a | 32 entries | 8 entries |
+| Branch predictor | off | off | off |
+| Peripherals | CLINT + UART | CLINT + UART | CLINT + UART |
+
+All three drop the FPU, so they compile with `ECE411_NO_FLOAT` — the Makefiles
+add it automatically.
+
+Two of the three are **untested against a real image**, and both are sized from
+the sources of the stack they are meant to carry rather than measured:
+
+- `pkg/config_freertos_keystone.vh` — no Keystone-FreeRTOS image exists yet.
+- `pkg/config_baremetal_linux.vh` — `testcode/linux` currently builds a
+  hard-float kernel (`CONFIG_FPU=y`) against a device tree advertising `f`/`d`,
+  so the existing `boot.lst` will **not** run on it. Its header lists the exact
+  kernel-config, ABI and device-tree deltas a soft-float image needs.
+
+Both also set `PLIC_SUPPORTED = 0`, which constrains the device tree — see
+their headers before building an image.
 
 ### Memory Map
 

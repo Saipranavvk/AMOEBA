@@ -4,13 +4,19 @@
 #include <stdio.h>
 
 /*-----------------------------------------------------------
- * FreeRTOS configuration for Wally/AMOEBA RISC-V bare metal simulation.
+ * FreeRTOS configuration for Wally/AMOEBA RISC-V.
  *
- * Clock and timer values assume wallypipelinedsoc defaults:
- *   CPU: 100 MHz.  CVW's clint_apb increments MTIME once per PCLK, and
- *   PCLK == HCLK == the CPU clock (the separate TIMECLK path is commented
- *   out upstream and TIMECLK is tied low in rv64_core_wrapper.sv), so the
- *   mtime frequency equals configCPU_CLOCK_HZ.
+ * CVW's clint_apb increments MTIME once per PCLK, and PCLK == HCLK == the CPU
+ * clock (the separate TIMECLK path is commented out upstream and TIMECLK is
+ * tied low in both wrappers), so the mtime frequency equals the CPU clock and
+ * configCPU_CLOCK_HZ must be the clock the core is actually running at.
+ *
+ * That is 100 MHz in simulation and FCLK_CLK0 on the FPGA -- 25 MHz by default,
+ * see FCLK_MHZ in fpga/pynq/Makefile.  Getting it wrong is a rate error rather
+ * than a correctness one: FreeRTOS still runs, but every tick interval is off
+ * by the ratio, so tc_timer_preempt and anything with a wall-clock expectation
+ * reads wrong, and hardware-vs-simulation timing comparisons become
+ * meaningless.  Hence the override below rather than a hardcoded constant.
  *----------------------------------------------------------*/
 
 /* ---- Scheduler behaviour ---- */
@@ -21,7 +27,10 @@
 #define configUSE_DAEMON_TASK_STARTUP_HOOK      0
 
 /* ---- Clock / tick ---- */
+/* Overridable from the build: the FPGA target passes -DconfigCPU_CLOCK_HZ. */
+#ifndef configCPU_CLOCK_HZ
 #define configCPU_CLOCK_HZ                      ( ( uint32_t ) 100000000 )
+#endif
 /*
  * The RISC-V port derives its mtimecmp step from
  *   uxTimerIncrementsForOneTick = configCPU_CLOCK_HZ / configTICK_RATE_HZ

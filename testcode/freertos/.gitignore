@@ -5,3 +5,6 @@ spike/
 sim.log
 dump.fst
 time.txt
+
+# Flat image for the FPGA loader (make bin).
+*.bin

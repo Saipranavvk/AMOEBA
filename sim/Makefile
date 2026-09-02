@@ -49,19 +49,59 @@ PROG_NAME ?= $(notdir $(basename $(PROG)))
 
 ECE411_NO_FLOAT = $(shell python3 $(CURDIR)/../bin/get_options.py no_float)
 
+# ── Pruned hardware configurations ────────────────────────────────────────────
+# CONFIG selects which pkg/ parameter set the no-Spike testbench is built
+# against, in place of the full RV64GC pkg/config.vh:
+#
+#     CONFIG=freertos           pkg/config_freertos.vh
+#                               only what the FreeRTOS images execute
+#     CONFIG=freertos_keystone  pkg/config_freertos_keystone.vh
+#                               that, plus what the Keystone SM and OpenSBI need
+#     CONFIG=baremetal_linux    pkg/config_baremetal_linux.vh
+#                               smallest core that boots a soft-float Linux
+#
+#     make freertos_regression CONFIG=freertos
+#     make linux_boot          CONFIG=baremetal_linux
+#
+# None of them has an FPU, so those builds must also drop the RVFI float channel:
+# without ECE411_NO_FLOAT the wrapper taps soc.core.fpu.fpu.fregfile, which is
+# no longer elaborated.  hvl/common/rvfi_reference.svh is generated per build
+# and is shared, so switching CONFIG rewrites it and the other Verilator
+# binaries rebuild on their next invocation.  The binaries themselves live in
+# separate -Mdir trees and coexist.
+CONFIG ?=
+ifeq ($(CONFIG),)
+  CONFIG_DEF   :=
+  NO_FLOAT_ARG := $(if $(ECE411_NO_FLOAT),no_float,)
+else ifeq ($(CONFIG),freertos)
+  CONFIG_DEF   := +define+AMOEBA_CONFIG_FREERTOS +define+ECE411_NO_FLOAT
+  NO_FLOAT_ARG := no_float
+  NO_SPIKE_DIR := $(NO_SPIKE_DIR)_freertos
+else ifeq ($(CONFIG),freertos_keystone)
+  CONFIG_DEF   := +define+AMOEBA_CONFIG_FREERTOS_KEYSTONE +define+ECE411_NO_FLOAT
+  NO_FLOAT_ARG := no_float
+  NO_SPIKE_DIR := $(NO_SPIKE_DIR)_freertos_keystone
+else ifeq ($(CONFIG),baremetal_linux)
+  CONFIG_DEF   := +define+AMOEBA_CONFIG_BAREMETAL_LINUX +define+ECE411_NO_FLOAT
+  NO_FLOAT_ARG := no_float
+  NO_SPIKE_DIR := $(NO_SPIKE_DIR)_baremetal_linux
+else
+  $(error CONFIG=$(CONFIG) is not a known configuration -- use freertos, freertos_keystone, baremetal_linux, or leave it unset)
+endif
+
 export VCS_ARCH_OVERRIDE=linux
 CVW_INCDIRS  = +incdir+$(CURDIR)/../hdl/core +incdir+$(CURDIR)/../pkg +incdir+$(CURDIR)/../third_party/cvw/config/rv64gc
 COMMON_FLAGS = +incdir+$(CURDIR)/../hvl/common $(CVW_INCDIRS) $(ECE411_NO_FLOAT) +define+DW_SUPPRESS_WARN +incdir+$(DW)/sim_ver
 VCS_FLAGS    = $(COMMON_FLAGS) +incdir+$(CURDIR)/../hvl/vcs -licqueue -full64 -lca -sverilog -timescale=1ps/1ps -debug_acc+all -kdb -suppress=LCA_FEATURES_ENABLED -msg_config=../vcs_warn.config -xprop=../xprop.config -xprop=flowctrl -assert svaext
 VER_FLAGS    = $(COMMON_FLAGS) +incdir+$(CURDIR)/../hvl/verilator $(TRACE_DEF) -Wall --timescale 1ps/1ps -Mdir $(BUILD_DIR) -O3 --output-split 20000 --output-split-cfuncs 200 -CFLAGS "-O3 -flto -DNDEBUG $(TRACE_CFLAGS)" -LDFLAGS "-flto" --x-assign fast --x-initial fast $(TRACE_VFLAGS) --cc --exe ../verilator_warn.vlt +define+ECE411_VERILATOR --threads $(shell nproc)
-NO_SPIKE_VER_FLAGS = $(COMMON_FLAGS) +define+ECE411_NO_SPIKE_DPI +define+ECE411_NO_SPIKE_PRINTER $(TRACE_DEF) +incdir+$(CURDIR)/../hvl/verilator -Wall --timescale 1ps/1ps -Mdir $(NO_SPIKE_DIR) -O3 --output-split 20000 --output-split-cfuncs 200 -CFLAGS "-O3 -flto -DNDEBUG $(TRACE_CFLAGS)" -LDFLAGS "-flto" --x-assign fast --x-initial fast $(TRACE_VFLAGS) --cc --exe ../verilator_warn.vlt +define+ECE411_VERILATOR --threads $(shell nproc)
+NO_SPIKE_VER_FLAGS = $(COMMON_FLAGS) $(CONFIG_DEF) +define+ECE411_NO_SPIKE_DPI +define+ECE411_NO_SPIKE_PRINTER $(TRACE_DEF) +incdir+$(CURDIR)/../hvl/verilator -Wall --timescale 1ps/1ps -Mdir $(NO_SPIKE_DIR) -O3 --output-split 20000 --output-split-cfuncs 200 -CFLAGS "-O3 -flto -DNDEBUG $(TRACE_CFLAGS)" -LDFLAGS "-flto" --x-assign fast --x-initial fast $(TRACE_VFLAGS) --cc --exe ../verilator_warn.vlt +define+ECE411_VERILATOR --threads $(shell nproc)
 
 
 # ── No-Spike simulator (shared by ISA-level tests and FreeRTOS tests) ──────────
 verilator/$(NO_SPIKE_DIR)/Vtop_tb: $(VER_SRCS) $(HDRS) $(CURDIR)/Makefile
 	mkdir -p verilator/$(NO_SPIKE_DIR)
 	python3 check_sus.py
-	python3 ../bin/rvfi_reference.py 1 $(ECE411_NO_FLOAT)
+	python3 ../bin/rvfi_reference.py 1 $(NO_FLOAT_ARG)
 	cd verilator ;\
 	PERL5LIB="$(CURDIR)/perl5:$${PERL5LIB}" verilator $(NO_SPIKE_VER_FLAGS) $(VER_SRCS) --top-module top_tb |& tee $(NO_SPIKE_DIR)/compile.log
 	cd verilator/$(NO_SPIKE_DIR) ;\
@@ -121,8 +161,16 @@ else
   LINUX_BUILD_DIR := build_linux
   LINUX_RVFI_DEF  := +define+ECE411_NO_RVFI
 endif
+# CONFIG applies to the Linux simulator too, into its own -Mdir.  Note for
+# CONFIG=baremetal_linux: that config sets ZICCLSM_SUPPORTED = 0, so misaligned
+# accesses trap exactly as the generated monitor assumes, and LINUX_RVFI=1 is
+# expected to work there without the false mismatch that forces it off on the
+# main config.
+ifneq ($(CONFIG),)
+  LINUX_BUILD_DIR := $(LINUX_BUILD_DIR)_$(CONFIG)
+endif
 
-LINUX_VER_FLAGS = $(COMMON_FLAGS) +define+ECE411_NO_SPIKE_DPI +define+ECE411_NO_SPIKE_PRINTER \
+LINUX_VER_FLAGS = $(COMMON_FLAGS) $(CONFIG_DEF) +define+ECE411_NO_SPIKE_DPI +define+ECE411_NO_SPIKE_PRINTER \
 	+define+ECE411_LINUX +define+ECE411_NO_TRACE $(LINUX_RVFI_DEF) +incdir+$(CURDIR)/../hvl/verilator \
 	-Wall --timescale 1ps/1ps -Mdir $(LINUX_BUILD_DIR) -O3 --output-split 20000 --output-split-cfuncs 200 \
 	-CFLAGS "-O3 -flto -DNDEBUG -DECE411_NO_TRACE" -LDFLAGS "-flto" --x-assign fast --x-initial fast \
@@ -134,7 +182,7 @@ LINUX_VER_FLAGS = $(COMMON_FLAGS) +define+ECE411_NO_SPIKE_DPI +define+ECE411_NO_
 verilator/$(LINUX_BUILD_DIR)/Vtop_tb: $(VER_SRCS) $(HDRS) $(CURDIR)/Makefile
 	mkdir -p verilator/$(LINUX_BUILD_DIR)
 	python3 check_sus.py
-	python3 ../bin/rvfi_reference.py 1 $(ECE411_NO_FLOAT)
+	python3 ../bin/rvfi_reference.py 1 $(NO_FLOAT_ARG)
 	cd verilator ;\
 	PERL5LIB="$(CURDIR)/perl5:$${PERL5LIB}" verilator $(LINUX_VER_FLAGS) $(VER_SRCS) --top-module top_tb |& tee $(LINUX_BUILD_DIR)/compile.log
 	cd verilator/$(LINUX_BUILD_DIR) ;\
@@ -148,14 +196,20 @@ build_linux: verilator/$(LINUX_BUILD_DIR)/Vtop_tb
 # LINUX_PASS selects the milestone: override it to stop at an earlier point in
 # the boot, e.g. LINUX_PASS='Linux version 6.6' for a ~5M-cycle smoke test.
 LINUX_DIR     ?= $(CURDIR)/../testcode/linux
-LINUX_MEMLST  ?= $(LINUX_DIR)/build/boot.lst
+# The image has to match the hardware: testcode/linux builds a per-CONFIG image
+# into its own subdirectory, because the device tree must not advertise an
+# extension the core does not implement.  CONFIG=baremetal_linux gets the
+# soft-float image; unset gets the full RV64GC one, at the path it has always
+# been at.  Override LINUX_MEMLST to boot something else (e.g. the uart smoke).
+LINUX_IMG_DIR := $(LINUX_DIR)/build$(if $(CONFIG),/$(CONFIG))
+LINUX_MEMLST  ?= $(LINUX_IMG_DIR)/boot.lst
 LINUX_TIMEOUT ?= 2000000000
 LINUX_PASS    ?= AMOEBA_LINUX_BOOT_OK
 LINUX_FAIL    ?= Kernel panic|Unable to handle kernel|Oops:|SBI panic
 LINUX_RUN_DIR ?= verilator/linux_boot
 
 $(LINUX_MEMLST):
-	$(MAKE) -C $(LINUX_DIR)
+	$(MAKE) -C $(LINUX_DIR) CONFIG=$(CONFIG)
 
 .PHONY: linux_boot
 linux_boot: verilator/$(LINUX_BUILD_DIR)/Vtop_tb $(LINUX_MEMLST)

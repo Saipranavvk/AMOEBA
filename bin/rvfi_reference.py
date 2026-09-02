@@ -42,22 +42,26 @@ rvfi_list = [
     "mem_wdata"
 ]
 
+float_list = [
+    "frs1_addr" ,
+    "frs2_addr" ,
+    "frs3_addr" ,
+    "frs1_rdata",
+    "frs2_rdata",
+    "frs3_rdata",
+    "frd_addr"  ,
+    "frd_wdata"
+]
+
 if not no_float:
-    rvfi_list += [
-        "frs1_addr" ,
-        "frs2_addr" ,
-        "frs3_addr" ,
-        "frs1_rdata",
-        "frs2_rdata",
-        "frs3_rdata",
-        "frd_addr"  ,
-        "frd_wdata"
-    ]
+    rvfi_list += float_list
 
 required_list = []
+known_list    = []
 
 for i in range(channels):
     required_list += [x + f"[{i}]" for x in rvfi_list]
+    known_list    += [x + f"[{i}]" for x in rvfi_list + ([] if not no_float else float_list)]
 
 allowed_char = set(string.ascii_lowercase + string.ascii_uppercase + string.digits + "._'[]")
 
@@ -74,9 +78,11 @@ if not all([x in j for x in required_list]):
     print("incomplete list in rvfi_reference.json", file=sys.stderr)
     exit(1)
 
-unexpected = [key for key in j if key not in required_list]
+# The json always carries the float channel; under no_float it is simply not
+# wired up, so allow it here rather than rejecting it as spurious.
+unexpected = [key for key in j if key not in known_list]
 
-if not all([x in required_list for x in j]):
+if not all([x in known_list for x in j]):
     print("spurious item in rvfi_reference.json", file=sys.stderr)
     print(unexpected)
     exit(1)
@@ -88,5 +94,7 @@ if not all([set(j[x]) <= allowed_char for x in j]):
 with open("rvfi_reference.svh", 'w') as f:
     f.write("always_comb begin\n")
     for x in j:
+        if x not in required_list:
+            continue
         f.write(f"    mon_itf.{x} = {j[x]};\n")
     f.write("end\n")

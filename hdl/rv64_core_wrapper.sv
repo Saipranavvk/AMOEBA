@@ -1,5 +1,8 @@
-// config.vh must be included at file scope before the module definition
-`include "config.vh"
+// The config must be included at file scope before the module definition.
+// pkg/amoeba_config_select.vh holds the AMOEBA_CONFIG_* ladder for every top
+// that needs it, behind a guard so two tops in one compilation unit do not
+// redeclare the same parameters.
+`include "amoeba_config_select.vh"
 
 module rv64_core_wrapper import cvw::*; (
     input  logic        clk,

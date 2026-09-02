@@ -8,6 +8,29 @@ export HDL_SRCS = $(shell find $(CURDIR)/../hdl -name '*.sv') $(CVW_SRCS)
 export SRAM_LIB = $(shell find $(CURDIR)/../sram/output/ -name "*.db")
 export DESIGN_TOP = rv64_core_wrapper
 
+# ── Pruned hardware configurations ────────────────────────────────────────────
+# Which pkg/ parameter set to synthesize, matching sim/Makefile's CONFIG:
+#
+#     make synth                            full RV64GC pkg/config.vh
+#     make synth CONFIG=freertos            pkg/config_freertos.vh
+#     make synth CONFIG=freertos_keystone   pkg/config_freertos_keystone.vh
+#     make synth CONFIG=baremetal_linux     pkg/config_baremetal_linux.vh
+#
+# No pruned config has an FPU, so ECE411_NO_FLOAT goes with them: without
+# it rv64_core_wrapper taps soc.core.fpu.fpu.fregfile, which is not elaborated.
+CONFIG ?=
+ifeq ($(CONFIG),)
+  export ECE411_CONFIG_DEFINES =
+else ifeq ($(CONFIG),freertos)
+  export ECE411_CONFIG_DEFINES = AMOEBA_CONFIG_FREERTOS ECE411_NO_FLOAT
+else ifeq ($(CONFIG),freertos_keystone)
+  export ECE411_CONFIG_DEFINES = AMOEBA_CONFIG_FREERTOS_KEYSTONE ECE411_NO_FLOAT
+else ifeq ($(CONFIG),baremetal_linux)
+  export ECE411_CONFIG_DEFINES = AMOEBA_CONFIG_BAREMETAL_LINUX ECE411_NO_FLOAT
+else
+  $(error CONFIG=$(CONFIG) is not a known configuration -- use freertos, freertos_keystone, baremetal_linux, or leave it unset)
+endif
+
 export STD_CELL_LIB=$(FREEPDK45)/stdcells.db
 export STD_CELL_ALIB=$(FREEPDK45)/alib
 
