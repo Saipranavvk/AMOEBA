@@ -101,6 +101,8 @@ module ecc_tb;
   // ── SECDED 8-bit tests ────────────────────────────────────────────────────────
   task automatic test_secded8;
     automatic logic [SECDED8_CW-1:0] cw;
+
+    // --- test pattern 1: 8'hA5 ---
     s8_data_in = 8'hA5; #1;
     cw = s8_codeword;
 
@@ -118,8 +120,8 @@ module ecc_tb;
         check($sformatf("secded8 SEC b%0d sec", b), s8_sec);
         check($sformatf("secded8 SEC b%0d ded", b), !s8_ded);
       end
-      if (b >= SECDED8_CB)
-        check($sformatf("secded8 SEC b%0d corrected", b), s8_data_out == 8'hA5);
+      // data must be preserved for every single-bit error (data bits corrected, check bits ignored)
+      check($sformatf("secded8 SEC b%0d data-ok", b), s8_data_out == 8'hA5);
     end
 
     // double-bit errors: all pairs (exhaustive for 13-bit codeword)
@@ -129,11 +131,38 @@ module ecc_tb;
         check($sformatf("secded8 DED (%0d,%0d)", b0, b1), s8_ded && !s8_sec);
       end
     end
+
+    // --- test pattern 2: all-zeros ---
+    s8_data_in = 8'h00; #1;
+    cw = s8_codeword;
+    s8_codeword_err = cw; #1;
+    check("secded8 all-zeros no-error data", s8_data_out == 8'h00);
+    check("secded8 all-zeros no-error sec",  !s8_sec);
+    check("secded8 all-zeros no-error ded",  !s8_ded);
+    // spot-check single-bit error correction for all-zeros
+    for (int b = SECDED8_CB; b < SECDED8_CW; b++) begin
+      s8_codeword_err = cw ^ (SECDED8_CW'(1) << b); #1;
+      check($sformatf("secded8 all-zeros SEC b%0d corrected", b), s8_data_out == 8'h00);
+    end
+
+    // --- test pattern 3: all-ones ---
+    s8_data_in = 8'hFF; #1;
+    cw = s8_codeword;
+    s8_codeword_err = cw; #1;
+    check("secded8 all-ones no-error data", s8_data_out == 8'hFF);
+    check("secded8 all-ones no-error sec",  !s8_sec);
+    check("secded8 all-ones no-error ded",  !s8_ded);
+    for (int b = SECDED8_CB; b < SECDED8_CW; b++) begin
+      s8_codeword_err = cw ^ (SECDED8_CW'(1) << b); #1;
+      check($sformatf("secded8 all-ones SEC b%0d corrected", b), s8_data_out == 8'hFF);
+    end
   endtask
 
   // ── SECDED 64-bit tests ───────────────────────────────────────────────────────
   task automatic test_secded64;
     automatic logic [SECDED64_CW-1:0] cw;
+
+    // --- test pattern 1: DEADBEEF ---
     s64_data_in = 64'hDEADBEEFCAFEBABE; #1;
     cw = s64_codeword;
 
@@ -147,17 +176,40 @@ module ecc_tb;
       if (b != SECDED64_CB-1) begin  // skip overall-parity-only error
         check($sformatf("secded64 SEC b%0d sec", b), s64_sec && !s64_ded);
       end
-      if (b >= SECDED64_CB)
-        check($sformatf("secded64 SEC b%0d corrected", b), s64_data_out == 64'hDEADBEEFCAFEBABE);
+      // data must be preserved for every single-bit error
+      check($sformatf("secded64 SEC b%0d data-ok", b), s64_data_out == 64'hDEADBEEFCAFEBABE);
     end
 
-    // spot-check DED: pairs within check-bit region
+    // spot-check DED: pairs across check-bit and data-bit regions
     for (int b0 = 0; b0 < 8; b0++) begin
       for (int b1 = b0+1; b1 < 16 && b1 < SECDED64_CW; b1++) begin
         s64_codeword_err = cw ^ (SECDED64_CW'(1) << b0) ^ (SECDED64_CW'(1) << b1); #1;
         check($sformatf("secded64 DED (%0d,%0d)", b0, b1), s64_ded && !s64_sec);
       end
     end
+    // additional DED spot-check: pairs within upper data-bit region
+    for (int b0 = SECDED64_CB; b0 < SECDED64_CB+8; b0++) begin
+      for (int b1 = b0+8; b1 < SECDED64_CB+24 && b1 < SECDED64_CW; b1++) begin
+        s64_codeword_err = cw ^ (SECDED64_CW'(1) << b0) ^ (SECDED64_CW'(1) << b1); #1;
+        check($sformatf("secded64 DED data (%0d,%0d)", b0, b1), s64_ded && !s64_sec);
+      end
+    end
+
+    // --- test pattern 2: all-zeros ---
+    s64_data_in = '0; #1;
+    cw = s64_codeword;
+    s64_codeword_err = cw; #1;
+    check("secded64 all-zeros no-error data", s64_data_out == '0);
+    check("secded64 all-zeros no-error sec",  !s64_sec);
+    check("secded64 all-zeros no-error ded",  !s64_ded);
+
+    // --- test pattern 3: all-ones ---
+    s64_data_in = '1; #1;
+    cw = s64_codeword;
+    s64_codeword_err = cw; #1;
+    check("secded64 all-ones no-error data", s64_data_out == '1);
+    check("secded64 all-ones no-error sec",  !s64_sec);
+    check("secded64 all-ones no-error ded",  !s64_ded);
   endtask
 
   // ── DECTED 8-bit tests ────────────────────────────────────────────────────────
@@ -179,6 +231,17 @@ module ecc_tb;
       check($sformatf("dected8 SEC b%0d dec",       b), !d8_dec);
       check($sformatf("dected8 SEC b%0d ted",       b), !d8_ted);
       check($sformatf("dected8 SEC b%0d corrected", b), d8_data_out == 8'h5A);
+    end
+
+    // single check-bit errors: data must be preserved regardless of error classification
+    // s1 bits: codeword[M-1:0] = codeword[4:0]. s3 bits: codeword[2M-1:M] = codeword[9:5].
+    // overall parity: codeword[2M] = codeword[10].
+    // (DECTED8_CB = 11 = 2*5+1 for M=5)
+    for (int b = 0; b < DECTED8_CB; b++) begin
+      d8_codeword_err = cw ^ (DECTED8_CW'(1) << b); #1;
+      check($sformatf("dected8 chk-bit b%0d data-ok", b), d8_data_out == 8'h5A);
+      // no DEC on a single check-bit error
+      check($sformatf("dected8 chk-bit b%0d !dec", b), !d8_dec);
     end
 
     // double data-bit errors (exhaustive over data region)
@@ -204,6 +267,22 @@ module ecc_tb;
         end
       end
     end
+
+    // all-zeros data
+    d8_data_in = 8'h00; #1;
+    cw = d8_codeword;
+    d8_codeword_err = cw; #1;
+    check("dected8 all-zeros no-error data", d8_data_out == 8'h00);
+    check("dected8 all-zeros no-error sec",  !d8_sec);
+    check("dected8 all-zeros no-error dec",  !d8_dec);
+
+    // all-ones data
+    d8_data_in = 8'hFF; #1;
+    cw = d8_codeword;
+    d8_codeword_err = cw; #1;
+    check("dected8 all-ones no-error data", d8_data_out == 8'hFF);
+    check("dected8 all-ones no-error sec",  !d8_sec);
+    check("dected8 all-ones no-error dec",  !d8_dec);
   endtask
 
   // ── DECTED 64-bit tests ───────────────────────────────────────────────────────
@@ -224,13 +303,30 @@ module ecc_tb;
       check($sformatf("dected64 SEC b%0d corrected", b), d64_data_out == 64'h0123456789ABCDEF);
     end
 
-    // spot-check DEC: pairs in the lower data region
+    // single check-bit errors: data must be preserved (no DEC)
+    for (int b = 0; b < DECTED64_CB; b++) begin
+      d64_codeword_err = cw ^ (DECTED64_CW'(1) << b); #1;
+      check($sformatf("dected64 chk-bit b%0d data-ok", b), d64_data_out == 64'h0123456789ABCDEF);
+      check($sformatf("dected64 chk-bit b%0d !dec",    b), !d64_dec);
+    end
+
+    // spot-check DEC: pairs across the data region (lower and upper)
     for (int b0 = DECTED64_CB; b0 < DECTED64_CB+10; b0++) begin
       for (int b1 = b0+1; b1 < DECTED64_CB+11; b1++) begin
         d64_codeword_err = cw ^ (DECTED64_CW'(1) << b0) ^ (DECTED64_CW'(1) << b1); #1;
         check($sformatf("dected64 DEC (%0d,%0d) dec",       b0, b1),
               d64_dec && !d64_sec && !d64_ted);
         check($sformatf("dected64 DEC (%0d,%0d) corrected", b0, b1),
+              d64_data_out == 64'h0123456789ABCDEF);
+      end
+    end
+    // non-adjacent pair spot-check
+    for (int b0 = DECTED64_CB; b0 < DECTED64_CB+4; b0++) begin
+      for (int b1 = DECTED64_CW-4; b1 < DECTED64_CW; b1++) begin
+        d64_codeword_err = cw ^ (DECTED64_CW'(1) << b0) ^ (DECTED64_CW'(1) << b1); #1;
+        check($sformatf("dected64 DEC far (%0d,%0d) dec",       b0, b1),
+              d64_dec && !d64_sec && !d64_ted);
+        check($sformatf("dected64 DEC far (%0d,%0d) corrected", b0, b1),
               d64_data_out == 64'h0123456789ABCDEF);
       end
     end
@@ -247,6 +343,22 @@ module ecc_tb;
         end
       end
     end
+
+    // all-zeros data
+    d64_data_in = '0; #1;
+    cw = d64_codeword;
+    d64_codeword_err = cw; #1;
+    check("dected64 all-zeros no-error data", d64_data_out == '0);
+    check("dected64 all-zeros no-error sec",  !d64_sec);
+    check("dected64 all-zeros no-error dec",  !d64_dec);
+
+    // all-ones data
+    d64_data_in = '1; #1;
+    cw = d64_codeword;
+    d64_codeword_err = cw; #1;
+    check("dected64 all-ones no-error data", d64_data_out == '1);
+    check("dected64 all-ones no-error sec",  !d64_sec);
+    check("dected64 all-ones no-error dec",  !d64_dec);
   endtask
 
   // ── Main ──────────────────────────────────────────────────────────────────────

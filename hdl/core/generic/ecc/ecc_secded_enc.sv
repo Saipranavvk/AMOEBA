@@ -52,25 +52,24 @@ module ecc_secded_enc #(
 
   logic [R-1:0] hamming;
   logic         overall_parity;
-  genvar        k;
 
-  /* verilator lint_off UNUSEDSIGNAL */
-  generate
-    for (k = 0; k < R; k++) begin : gen_hamming
-      always_comb begin
-        logic xr;
-        xr = 1'b0;
-        // Iterate over all codeword positions p (1-indexed).
-        // Non-power-of-2 positions are data positions; index = p - clog2(p+1) - 1.
-        for (int p = 1; p <= DATA_WIDTH + R; p++) begin
-          if ((p & (p - 1)) != 0 && p[k])
-            xr = xr ^ data_i[p - $clog2(p + 1) - 1];
-        end
-        hamming[k] = xr;
+  // For each parity bit k, XOR the data bits at codeword positions p where
+  // p is a data position (not a power of 2) AND bit k of p is set.
+  // All indexing is done with genvars so $clog2 receives a constant argument.
+  for (genvar k = 0; k < R; k++) begin : gen_hamming
+    logic [DATA_WIDTH+R-1:0] hcov;
+    for (genvar p = 1; p <= DATA_WIDTH + R; p++) begin : gen_pos
+      localparam bit IS_DATA    = ((p & (p - 1)) != 0);
+      localparam bit HAS_BIT_K  = ((p >> k) & 1) != 0;
+      if (IS_DATA && HAS_BIT_K) begin : covered
+        localparam int DI = p - $clog2(p + 1) - 1;
+        assign hcov[p-1] = data_i[DI];
+      end else begin : not_covered
+        assign hcov[p-1] = 1'b0;
       end
     end
-  endgenerate
-  /* verilator lint_on UNUSEDSIGNAL */
+    assign hamming[k] = ^hcov;
+  end
 
   assign overall_parity = ^data_i ^ ^hamming;
 

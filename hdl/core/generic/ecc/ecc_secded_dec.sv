@@ -53,25 +53,24 @@ module ecc_secded_dec #(
   assign data_rx    = codeword_i[CW_WIDTH-1 : CHECK_BITS];
 
   // Recompute expected Hamming bits from received data using the same
-  // position-scan as the encoder (same formula, same constants).
+  // position mapping as the encoder.  All indexing uses genvars so
+  // $clog2 receives a constant argument (elaboration-time, synthesizable).
   logic [R-1:0] hamming_exp;
-  genvar        k;
 
-  /* verilator lint_off UNUSEDSIGNAL */
-  generate
-    for (k = 0; k < R; k++) begin : gen_exp
-      always_comb begin
-        logic xr;
-        xr = 1'b0;
-        for (int p = 1; p <= DATA_WIDTH + R; p++) begin
-          if ((p & (p - 1)) != 0 && p[k])
-            xr = xr ^ data_rx[p - $clog2(p + 1) - 1];
-        end
-        hamming_exp[k] = xr;
+  for (genvar k = 0; k < R; k++) begin : gen_exp
+    logic [DATA_WIDTH+R-1:0] ecov;
+    for (genvar p = 1; p <= DATA_WIDTH + R; p++) begin : gen_pos
+      localparam bit IS_DATA    = ((p & (p - 1)) != 0);
+      localparam bit HAS_BIT_K  = ((p >> k) & 1) != 0;
+      if (IS_DATA && HAS_BIT_K) begin : covered
+        localparam int DI = p - $clog2(p + 1) - 1;
+        assign ecov[p-1] = data_rx[DI];
+      end else begin : not_covered
+        assign ecov[p-1] = 1'b0;
       end
     end
-  endgenerate
-  /* verilator lint_on UNUSEDSIGNAL */
+    assign hamming_exp[k] = ^ecov;
+  end
 
   logic [R-1:0] syndrome;
   logic         parity_check;
@@ -86,19 +85,15 @@ module ecc_secded_dec #(
 
   // Parallel correction mask: data bit at codeword position p is in error
   // when the syndrome equals p (the Hamming position).
-  // Iterate over all codeword positions; for each data position derive DI.
   logic [DATA_WIDTH-1:0] correction_mask;
-  genvar                 pos;
 
-  generate
-    for (pos = 1; pos <= DATA_WIDTH + R; pos++) begin : gen_corr
-      localparam int IS_DATA = ((pos & (pos - 1)) != 0) ? 1 : 0;
-      if (IS_DATA != 0) begin : data_bit
-        localparam int DI = pos - $clog2(pos + 1) - 1;
-        assign correction_mask[DI] = (syndrome == R'(pos));
-      end
+  for (genvar pos = 1; pos <= DATA_WIDTH + R; pos++) begin : gen_corr
+    localparam bit IS_DATA = ((pos & (pos - 1)) != 0);
+    if (IS_DATA) begin : data_bit
+      localparam int DI = pos - $clog2(pos + 1) - 1;
+      assign correction_mask[DI] = (syndrome == R'(pos));
     end
-  endgenerate
+  end
 
   logic [DATA_WIDTH-1:0] corrected_data;
   assign corrected_data = data_rx ^ correction_mask;
