@@ -1,0 +1,268 @@
+\documentclass[12pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{setspace}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=false,
+    pdfborder={0 0 0},
+    pdftitle={Engineering Challenges in Building a Fault-Tolerant Processor},
+}
+
+\setstretch{1.15}
+
+\titleformat{\section}{\large\bfseries}{}{0em}{}[\titlerule]
+\titlespacing{\section}{0pt}{1.5em}{0.75em}
+
+\title{\textbf{Engineering Challenges in Building a Fault-Tolerant,
+Security-Hardened Linux-Capable RISC-V Processor on a 1\,mm$^2$ Die}}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+% ─────────────────────────────────────────────────────────────
+\section*{Feature Categories}
+
+We organize the features we are implementing into seven categories,
+which we reference throughout the rest of this document rather than
+individual implementations.
+
+\begin{description}
+  \setlength{\itemsep}{0.4em}
+
+  \item[\textbf{Error Correction}]
+    covers all ECC and parity code mechanisms across cache SRAMs, the
+    register file, CSR registers, pipeline registers, and the memory bus.
+
+  \item[\textbf{Redundancy}]
+    covers physical and logical duplication of critical state and logic,
+    including TMR-style protection of control signals and registers, with
+    spatial separation between instances.
+
+  \item[\textbf{Re-execution}]
+    covers fault detection through duplicated execution and comparison,
+    including a shadow execution pipeline that also serves as our
+    execution unit checker, a run-behind hardware thread that verifies
+    load and store consistency, and periodic insertion of known-result
+    instructions.
+
+  \item[\textbf{Architectural State Hardening}]
+    covers protection of privilege-critical registers against physical
+    tampering, targeting the CSR file, interrupt controller state, and
+    privilege mode registers.
+
+  \item[\textbf{Environmental and Power Hardening}]
+    covers circuits that detect and respond to out-of-bounds supply
+    conditions.
+
+  \item[\textbf{Security Controls}]
+    covers hardware entropy generation and debug interface locking.
+
+  \item[\textbf{Validation Infrastructure}]
+    covers the synthesis, simulation, FPGA boot, co-simulation, and
+    fuzzing tooling needed to verify all of the above.
+\end{description}
+
+\noindent\rule{\linewidth}{0.4pt}
+
+% ─────────────────────────────────────────────────────────────
+\section{The Area Constraint}
+
+At 65\,nm TSMC with 1\,mm$^2$ of die area, we are not working with
+much margin. A Linux-capable CVW configuration (RV64GC, Sv39 MMU, L1
+I/D caches, CLINT, PLIC, FPU) is already a large design; a pair of
+16\,KB L1 caches already takes up 150,000 to 200,000\,$\mu$m$^2$ in
+bit cell area alone, before any periphery. By the time we have a
+functional Linux core, adding the aforementioned features means cutting
+or shrinking something else.
+
+Error correction compounds across every structure we apply it to;
+re-execution is the most expensive category since it duplicates
+execution logic and maintains additional buffering infrastructure;
+redundancy adds overhead wherever it is applied. None of these costs are
+fixed at design time, and decisions get revisited every synthesis
+iteration: which structures get full error correction versus parity, how
+aggressively we apply redundancy, whether re-execution covers a full
+pipeline instance or a reduced subset. Those runs take hours at this
+scale, meaning the synthesis flow has to be treated as actual
+infrastructure: automated, run regularly, and tracked across every
+feature addition.
+
+% ─────────────────────────────────────────────────────────────
+\section{Physical Design}
+
+Even if the total gate count fits, getting everything placed and routed
+correctly is its own problem. Redundant instances need spatial
+separation; a localized EM pulse or power glitch that hits both copies
+simultaneously defeats the redundancy, and the PnR tool has no native
+understanding of this. It has to be expressed as explicit placement
+constraints or floorplan blockages, alongside timing and routing density
+requirements. Error correction check logic ideally sits co-located with
+the structures it protects; pushing it far from cache arrays adds
+routing overhead directly onto timing-critical read paths. On a
+1\,mm$^2$ die, satisfying all of these simultaneously has no guaranteed
+clean solution.
+
+% ─────────────────────────────────────────────────────────────
+\section{The I/O Ring Bottleneck}
+
+We have at most 53 I/O rings total. After allocating for JTAG (5
+signals), power and ground (8 to 12 rings), clock and reset (2 to 3),
+and other necessary I/O, we are left with around 30 to 35 rings for
+memory. A standard RISC-V cacheline is 512\,bits; that is not enough
+to transfer one in a single cycle.
+
+We are still working through what the right memory interface looks like;
+the general direction is a serialized burst protocol with a narrow data
+bus. Every cache miss pays a multiplied fill penalty as a result, and
+the bus width is a hard ceiling on memory performance regardless of how
+fast the core runs. If the FPGA build uses a wider memory interface for
+convenience, the cache fill timing will be fundamentally different from
+what silicon sees, and the FPGA run loses validity as a proxy. While
+optimal performance is not the primary focus of this tape-out,
+trade-offs between performance and complexity need to be deeply evaluated
+for our results to be interesting.
+
+% ─────────────────────────────────────────────────────────────
+\section{Verifying Linux Correctness}
+
+Linux boot is somewhere between one and ten billion instructions. A full
+RTL simulation in Verilator already takes hours per boot run without
+fault injection or co-simulation overhead; the practical signal for
+progress is UART output, which tells us the system is mostly working
+but gives no instruction-level visibility into whether error correction
+fired correctly, whether re-execution caught an injected fault, or
+whether architectural state hardening triggered when it should have.
+
+This pushes fault injection and recovery validation onto the FPGA, which
+can boot Linux in tens of seconds to minutes at realistic frequencies.
+But making the FPGA a meaningful validation artifact means building fault
+injection RTL into the build itself, and that fault injection RTL needs
+its own verification. Our security controls create an additional
+lifecycle problem: once debug locking is engaged, JTAG visibility is
+gone; the validation flow has to be structured so that access control
+hardening is tested last, or the design needs a secure re-enable
+mechanism hardened against the same physical threat model.
+
+% ─────────────────────────────────────────────────────────────
+\section{Timing Closure}
+
+Error correction decode logic sits on the load-use latency path;
+architectural state hardening checks sit in the execute stage;
+re-execution introduces forwarding and buffering paths the base CVW
+pipeline was not designed for. At 65\,nm the margins are not as thin as
+they would be at an advanced node, but the bigger risk is missing timing
+narrowly because a late-added feature closes off the last bit of slack
+on a path that was already close. Critical paths need to be tracked
+across every synthesis iteration for the same reason area does; we want
+to tape out at a reasonable clock frequency even if performance is not
+the primary objective.
+
+% ─────────────────────────────────────────────────────────────
+\section{Cutting CVW Down to Fit}
+
+CVW was built as a highly parameterizable RV64GC core; that
+parameterizability is a liability here. The configuration space is
+large: cache sizes, MMU modes, privilege support levels, FPU, debug
+module, peripheral controllers. CVW's parameters are deeply
+interconnected; changing cache geometry affects MMU page table walks,
+modifying peripheral support changes what device drivers Linux can use,
+and some parameters produce RTL that simulates fine for simple tests but
+breaks under a real Linux workload. The only reliable way to know
+whether a configuration reduction is safe is to boot Linux with it,
+which brings back the hours-long simulation problem.
+
+Several of our feature categories also require modifying CVW's internal
+structures, not just wrapping around them. Architectural state hardening
+requires understanding exactly how CVW implements privilege-critical
+register reads and writes before we can safely add protection logic.
+Re-execution mechanisms have to tap into the CVW pipeline at specific
+points that were not documented for external modification. Error
+correction on register file reads has to integrate with CVW's forwarding
+network, which was not designed to carry check bits alongside data. A
+wrong assumption in any of these produces a bug that only surfaces
+during Linux boot, hours into simulation.
+
+% ─────────────────────────────────────────────────────────────
+\section{The Mechanisms Do Not Compose Cleanly}
+
+The clearest case involves error correction and re-execution operating on
+the same data path. If error correction corrects a fault before a value
+reaches the execution stage, both pipelines receive the corrected value;
+they agree, and the correction happens without raising any flags. That
+is correct behavior for a soft error, but it means our re-execution
+mechanisms have zero visibility into faults that error correction
+handles. Separately, the re-executing path runs behind the main pipeline
+and issues memory accesses to verify what it observed; if a write-back
+or eviction happens in that window, the re-executing path sees updated
+data, producing a spurious divergence that does not indicate any real
+fault.
+
+Architectural state hardening protects privilege-critical register
+values, but a glitch that corrupts privilege mode state does not
+necessarily corrupt an execution unit result; it changes what
+instructions are architecturally permitted. Our re-execution mechanism
+checks execution unit outputs and does not monitor privilege state,
+meaning a successful glitch that forces a privilege transition without
+going through a normal register write path would not be caught. The
+fault accounting state written when our execution unit checker detects a
+failing unit also has to be included in our architectural state hardening
+scheme; the fault detection and state hardening infrastructures are not
+independent and have to be co-designed, including the full recovery
+hierarchy from silent correction through trap or reset, which also has
+to interact correctly with the OS.
+
+% ─────────────────────────────────────────────────────────────
+\section{The Validation Infrastructure}
+
+Our re-execution mechanism that inserts known-result instructions at
+runtime requires that the co-simulation oracle knows exactly which
+instructions were inserted and when. The entropy source driving the
+insertion has to be observable in simulation; if it is not, co-simulation
+breaks at every point an inserted instruction appears, meaning the
+insertion hardware has to be co-designed with the validation approach
+from the beginning.
+
+Fuzzing for a Linux-capable processor with all of these fault tolerance
+categories requires stimulus that targets privilege boundaries, fault
+injection timing, and recovery scenarios; standard coverage metrics do
+not capture any of that, and off-the-shelf fuzzing tools are not
+sufficient. The synthesis flow for area and timing tracking also has to
+be automated from the start; if it is run ad hoc, overruns get
+discovered late, and getting to tapeout on a 1\,mm$^2$ die requires
+continuous visibility into real post-synthesis numbers across every RTL
+iteration.
+
+% ─────────────────────────────────────────────────────────────
+\section{Development Pipeline as a Response to Simulation Constraints}
+
+A single Linux boot in Verilator takes hours, meaning we cannot block
+feature integration on waiting for full simulation runs to complete.
+Our response is to pipeline the work: the immediate priority is reducing
+the CVW configuration to the minimum needed for Linux boot, freeing up
+as much of the 1\,mm$^2$ budget as possible before integration begins.
+That work is happening across the team in parallel so we enter the
+integration phase with a known baseline rather than discovering overruns
+mid-integration.
+
+Once we have that baseline, we run three tracks concurrently: writing
+and integrating new features into the RTL, running synthesis on whatever
+has been integrated for area estimates, and running simulation on
+whatever version of the design has been stable long enough to simulate.
+Synthesis gives us area feedback on features before simulation has
+validated them; that is an acceptable tradeoff given the constraints.
+What this requires is that synthesis results are treated as the primary
+feedback signal for area decisions, and that simulation is structured to
+catch integration bugs as features stabilize rather than as a gate
+before any feature work proceeds.
+
+\end{document}

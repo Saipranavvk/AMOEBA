@@ -39,6 +39,8 @@ module csr import cvw::*;  #(parameter cvw_t P) (
   input  logic [P.XLEN-1:0]        PCSpillM,                  // program counter, next PC going to trap/return logic aligned after an instruction spill
   input  logic [P.XLEN-1:0]        SrcAM, IEUAdrxTvalM,       // SrcA and memory address from IEU
   input  logic                     CSRReadM, CSRWriteM,       // read or write CSR
+  input  logic                     PrivModeSecFaultW,         // TMR correctable fault from privmode
+  input  logic                     PrivModeUncorrectableFaultW, // TMR uncorrectable fault from privmode
   input  logic                     TrapM,                     // trap is occurring
   input  logic                     mretM, sretM,              // return instruction
   input  logic                     InterruptM,                // interrupt is occurring
@@ -123,6 +125,8 @@ module csr import cvw::*;  #(parameter cvw_t P) (
   logic [P.XLEN-1:0]       TVecM,NextFaultMtvalM;
   logic                    MTrapM, STrapM;
   logic                    SelMtvecM;
+  logic                    MppReservedM;
+  logic [6:0]              SecFaultM;
   logic [P.XLEN-1:0]       TVecAlignedM;
   logic                    InstrValidNotFlushedM;
   logic                    STimerInt;
@@ -211,6 +215,16 @@ module csr import cvw::*;  #(parameter cvw_t P) (
   assign MTrapM = TrapM & (NextPrivilegeModeM == P.M_MODE);
   assign STrapM = TrapM & (NextPrivilegeModeM == P.S_MODE) & P.S_SUPPORTED;
 
+  // STATUS_MPP reserved encoding check (normal write path already filters this via STATUS_MPP_NEXT)
+  assign MppReservedM = (STATUS_MPP == 2'b10);
+
+  ///////////////////////////////////////////
+  // CSR Hardening
+  ///////////////////////////////////////////
+
+  csrharden csrharden(.PrivModeSecFaultW, .PrivModeUncorrectableFaultW, .MppReservedM,
+    .IllegalCSRAccessM, .InstrValidM, .SecFaultM);
+
   ///////////////////////////////////////////
   // CSRs
   ///////////////////////////////////////////
@@ -235,7 +249,7 @@ module csr import cvw::*;  #(parameter cvw_t P) (
     .CSRWriteValM, .CSRMReadValM, .MTVEC_REGW,
     .MEPC_REGW, .MCOUNTEREN_REGW, .MCOUNTINHIBIT_REGW,
     .MEDELEG_REGW, .MIDELEG_REGW,.PMPCFG_ARRAY_REGW, .PMPADDR_ARRAY_REGW,
-    .MIP_REGW, .MIE_REGW, .WriteMSTATUSM, .WriteMSTATUSHM,
+    .MIP_REGW, .MIE_REGW, .SecFaultM, .WriteMSTATUSM, .WriteMSTATUSHM,
     .IllegalCSRMAccessM, .IllegalCSRMWriteReadonlyM,
     .MENVCFG_REGW);
 

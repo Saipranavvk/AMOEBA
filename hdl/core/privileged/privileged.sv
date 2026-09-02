@@ -97,7 +97,8 @@ module privileged import cvw::*;  #(parameter cvw_t P) (
   input  logic              InvalidateICacheM,                              // fence instruction
   output logic              BigEndianM,                                     // Use big endian in current privilege mode
   // Fault outputs
-  output logic              wfiM, IntPendingM                               // Stall in Memory stage for WFI until interrupt pending or timeout
+  output logic              wfiM, IntPendingM,                              // Stall in Memory stage for WFI until interrupt pending or timeout
+  output logic              PrivModeUncorrectableFaultW                    // TMR uncorrectable privilege mode fault
 );
 
   logic [4:0]               CauseM;                                         // trap cause
@@ -121,10 +122,12 @@ module privileged import cvw::*;  #(parameter cvw_t P) (
   logic                     BreakpointFaultM, EcallFaultM;                  // breakpoint and Ecall traps should retire
 
   logic                     wfiW;
+  logic                     PrivModeSecFaultW;
 
   // track the current privilege level
   privmode #(P) privmode(.clk, .reset, .StallW, .TrapM, .mretM, .sretM, .DelegateM,
-    .STATUS_MPP, .STATUS_SPP, .NextPrivilegeModeM, .PrivilegeModeW);
+    .STATUS_MPP, .STATUS_SPP, .NextPrivilegeModeM, .PrivilegeModeW,
+    .PrivModeSecFaultW, .PrivModeUncorrectableFaultW);
 
   // decode privileged instructions
   privdec #(P) pmd(.clk, .reset, .StallW, .FlushW, .InstrM(InstrM[31:7]),
@@ -135,7 +138,7 @@ module privileged import cvw::*;  #(parameter cvw_t P) (
   // Control and Status Registers
   csr #(P) csr(.clk, .reset, .FlushM, .FlushW, .StallE, .StallM, .StallW,
     .InstrM, .InstrOrigM, .PCM, .PCSpillM, .SrcAM, .IEUAdrxTvalM,
-    .CSRReadM, .CSRWriteM, .TrapM, .mretM, .sretM, .InterruptM,
+    .CSRReadM, .CSRWriteM, .PrivModeSecFaultW, .PrivModeUncorrectableFaultW, .TrapM, .mretM, .sretM, .InterruptM,
     .MTimerInt, .MExtInt, .SExtInt, .MSwInt,
     .MTIME_CLINT, .InstrValidM, .FRegWriteM, .LoadStallD, .StoreStallD,
     .BPDirWrongM, .BTAWrongM, .RASPredPCWrongM, .BPWrongM,

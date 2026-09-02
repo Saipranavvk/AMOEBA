@@ -45,7 +45,8 @@ module wallypipelinedcore import cvw::*; #(parameter cvw_t P) (
    output logic [3:0]            HPROT,
    output logic [1:0]            HTRANS,
    output logic                  HMASTLOCK,
-   input  logic                  ExternalStall
+   input  logic                  ExternalStall,
+   output logic                  PrivModeUncorrectableFaultW  // TMR uncorrectable privilege mode fault — wire to reset/NMI
 );
 
   logic                          StallF, StallD, StallE, StallM, StallW;
@@ -306,14 +307,15 @@ module wallypipelinedcore import cvw::*; #(parameter cvw_t P) (
       .PrivilegeModeW, .SATP_REGW,
       .STATUS_MXR, .STATUS_SUM, .STATUS_MPRV, .STATUS_MPP, .STATUS_FS,
       .PMPCFG_ARRAY_REGW, .PMPADDR_ARRAY_REGW,
-      .FRM_REGW, .ENVCFG_CBE, .ENVCFG_PBMTE, .ENVCFG_ADUE, .wfiM, .IntPendingM, .BigEndianM);
+      .FRM_REGW, .ENVCFG_CBE, .ENVCFG_PBMTE, .ENVCFG_ADUE, .wfiM, .IntPendingM, .BigEndianM,
+      .PrivModeUncorrectableFaultW);
   end else begin
     assign {CSRReadValW, PrivilegeModeW,
             SATP_REGW, STATUS_MXR, STATUS_SUM, STATUS_MPRV, STATUS_MPP, STATUS_FS, FRM_REGW,
             // PMPCFG_ARRAY_REGW, PMPADDR_ARRAY_REGW,
             ENVCFG_CBE, ENVCFG_PBMTE, ENVCFG_ADUE,
             EPCM, TrapVectorM, RetM, TrapM,
-            sfencevmaM, BigEndianM, wfiM, IntPendingM} = '0;
+            sfencevmaM, BigEndianM, wfiM, IntPendingM, PrivModeUncorrectableFaultW} = '0;
   end
 
   // multiply/divide unit

@@ -63,7 +63,8 @@ module wallypipelinedsoc import cvw::*; #(parameter cvw_t P)  (
   input  logic                SDCIn,            // SDC DATA[0]     to     SPI DI
   output logic                SDCCmd,           // SDC CMD         from   SPI DO
   output logic [3:0]          SDCCS,            // SDC Card Detect from   SPI CS
-  output logic                SDCCLK            // SDC Clock       from   SPI Clock
+  output logic                SDCCLK,           // SDC Clock       from   SPI Clock
+  output logic                PrivModeUncorrectableFaultW  // TMR uncorrectable privilege mode fault — wire to reset/NMI
 );
 
   // Uncore signals
@@ -80,7 +81,8 @@ module wallypipelinedsoc import cvw::*; #(parameter cvw_t P)  (
   wallypipelinedcore #(P) core(.clk, .reset,
     .MTimerInt, .MExtInt, .SExtInt, .MSwInt, .MTIME_CLINT,
     .HRDATA, .HREADY, .HRESP, .HCLK, .HRESETn, .HADDR, .HWDATA, .HWSTRB,
-    .HWRITE, .HSIZE, .HBURST, .HPROT, .HTRANS, .HMASTLOCK, .ExternalStall
+    .HWRITE, .HSIZE, .HBURST, .HPROT, .HTRANS, .HMASTLOCK, .ExternalStall,
+    .PrivModeUncorrectableFaultW
    );
 
   // instantiate uncore if a bus interface exists

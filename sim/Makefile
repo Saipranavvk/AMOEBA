@@ -336,6 +336,33 @@ regression:
 	$(MAKE) isa_regression
 	$(MAKE) freertos_regression
 
+# ── ECC test suite (add sub-targets here as new ECC modules are added) ────────
+.PHONY: ecc_test ecc_secded_dected_test csr_harden_test
+ecc_test: ecc_secded_dected_test csr_harden_test
+
+ecc_secded_dected_test:
+	mkdir -p verilator/ecc_tb
+	verilator --binary -O2 --top-module ecc_tb \
+	    $(wildcard $(CURDIR)/../hdl/core/generic/ecc/*.sv) \
+	    $(CURDIR)/../hvl/ecc/ecc_tb.sv \
+	    -Mdir verilator/ecc_tb --Wall --timescale 1ps/1ps 2>&1 | tee verilator/ecc_tb/compile.log
+	verilator/ecc_tb/Vecc_tb
+
+csr_harden_test:
+	mkdir -p verilator/csr_harden_tb
+	verilator --binary --timing -O2 --top-module csr_harden_tb \
+	    $(CURDIR)/../hdl/core/cvw.sv \
+	    $(CURDIR)/../hdl/core/generic/flop/flopenl.sv \
+	    $(CURDIR)/../hdl/core/privileged/privmode.sv \
+	    $(CURDIR)/../hdl/core/privileged/csrharden.sv \
+	    $(CURDIR)/../hvl/ecc/csr_harden_tb.sv \
+	    -Mdir verilator/csr_harden_tb \
+	    +incdir+$(CURDIR)/../hdl/core \
+	    +incdir+$(CURDIR)/../pkg \
+	    -Wall -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-GENUNNAMED \
+	    --timescale 1ps/1ps 2>&1 | tee verilator/csr_harden_tb/compile.log
+	verilator/csr_harden_tb/Vcsr_harden_tb
+
 .PHONY: clean
 clean:
 	rm -rf bin vcs verdi verilator spike

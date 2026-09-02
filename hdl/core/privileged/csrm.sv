@@ -40,6 +40,7 @@ module csrm  import cvw::*;  #(parameter cvw_t P) (
   input  logic [5:0]               NextCauseM,
   input  logic [P.XLEN-1:0]        CSRWriteValM,
   input  logic [11:0]              MIP_REGW, MIE_REGW,
+  input  logic [6:0]               SecFaultM,
   output logic [P.XLEN-1:0]        CSRMReadValM, MTVEC_REGW,
   output logic [P.XLEN-1:0]        MEPC_REGW,
   output logic [31:0]              MCOUNTEREN_REGW, MCOUNTINHIBIT_REGW,
@@ -62,6 +63,9 @@ module csrm  import cvw::*;  #(parameter cvw_t P) (
   logic                            WriteMTVECM, WriteMEDELEGM, WriteMIDELEGM;
   logic                            WriteMSCRATCHM, WriteMEPCM, WriteMCAUSEM, WriteMTVALM;
   logic                            WriteMCOUNTERENM, WriteMCOUNTINHIBITM;
+  logic                            WriteMSECFAULTM;
+  logic [6:0]                      MSECFAULT_REGW;
+  logic [6:0]                      msecfault_clr;
 
   // Machine CSRs
   localparam MVENDORID     = 12'hF11;
@@ -98,6 +102,7 @@ module csrm  import cvw::*;  #(parameter cvw_t P) (
   localparam DPC           = 12'h7B1;
   localparam DSCRATCH0     = 12'h7B2;
   localparam DSCRATCH1     = 12'h7B3;
+  localparam MSECFAULT     = 12'h7C0;
   /* verilator lint_off UNUSEDPARAM */
   // Constants
   localparam ZERO = {(P.XLEN){1'b0}};
@@ -228,6 +233,14 @@ module csrm  import cvw::*;  #(parameter cvw_t P) (
       else                         PMPADDR_ARRAY_REGW[i] = {pmpaddr[P.PA_BITS-3:P.PMP_G], {P.PMP_G{1'b0}}}; // in TOR/OFF, bottom G bits read as 0s
     end
 
+  // MSECFAULT: sticky security fault register, W1C from M-mode, set by hardware
+  assign WriteMSECFAULTM = CSRMWriteM & (CSRAdrM == MSECFAULT);
+  assign msecfault_clr   = WriteMSECFAULTM ? CSRWriteValM[6:0] : 7'h00;
+
+  always_ff @(posedge clk)
+    if (reset) MSECFAULT_REGW <= 7'h00;
+    else       MSECFAULT_REGW <= (MSECFAULT_REGW | SecFaultM) & ~msecfault_clr;
+
   // Read machine mode CSRs
   // verilator lint_off WIDTH
   logic [5:0] entry;
@@ -273,6 +286,7 @@ module csrm  import cvw::*;  #(parameter cvw_t P) (
       MENVCFGH:      if (P.U_SUPPORTED & P.XLEN==32) CSRMReadValM = MENVCFGH_REGW;
                      else IllegalCSRMAccessM = 1'b1;
       MCOUNTINHIBIT: CSRMReadValM = {{(P.XLEN-32){1'b0}}, MCOUNTINHIBIT_REGW};
+      MSECFAULT:     CSRMReadValM = {{(P.XLEN-7){1'b0}}, MSECFAULT_REGW};
       default:       IllegalCSRMAccessM = 1'b1;
     endcase
   end
