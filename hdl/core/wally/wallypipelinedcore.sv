@@ -88,6 +88,14 @@ module wallypipelinedcore import cvw::*; #(parameter cvw_t P) (
   logic [3:0]                    CMOpM;                           // 1: cbo.inval; 2: cbo.flush; 4: cbo.clean; 8: cbo.zero
   logic                          IFUPrefetchE, LSUPrefetchM;      // instruction / data prefetch hints
 
+  // AMOEBA random instruction insertion
+  logic [31:0]                   RAND_INSTR_INSERT_FREQ_REGW;     // rand_instr_insert_freq CSR
+  logic [31:0]                   DummyInstrD;                     // dummy instruction to inject
+  logic                          InjectD;                         // inject a dummy this cycle
+  logic                          DummySelD;                       // shadow register the dummy writes
+  logic                          DummyW;                          // Writeback holds a dummy instruction
+  logic                          InsertOkD;                       // pipeline permits an insertion
+
   // floating point unit signals
   logic [2:0]                    FRM_REGW;
   logic [4:0]                    RdE, RdM, RdW;
@@ -175,7 +183,7 @@ module wallypipelinedcore import cvw::*; #(parameter cvw_t P) (
   ifu #(P) ifu(.clk, .reset,
     .StallF, .StallD, .StallE, .StallM, .StallW, .FlushD, .FlushE, .FlushM, .FlushW,
     .InstrValidE, .InstrValidD,
-    .BranchD, .BranchE, .JumpD, .JumpE, .ICacheStallF,
+    .BranchD, .BranchE, .JumpD, .JumpE, .ICacheStallF, .InjectD,
     // Fetch
     .HRDATA, .PCSpillF, .IFUHADDR,
     .IFUStallF, .IFUHBURST, .IFUHTRANS, .IFUHSIZE, .IFUHREADY, .IFUHWRITE,
@@ -217,7 +225,26 @@ module wallypipelinedcore import cvw::*; #(parameter cvw_t P) (
      // hazards
      .StallD, .StallE, .StallM, .StallW, .FlushD, .FlushE, .FlushM, .FlushW,
      .StructuralStallD, .LoadStallD, .StoreStallD, .PCSrcE,
-     .CSRReadM, .CSRWriteM, .PrivilegedM, .CSRWriteFenceM, .InvalidateICacheM);
+     .CSRReadM, .CSRWriteM, .PrivilegedM, .CSRWriteFenceM, .InvalidateICacheM,
+     // random instruction insertion
+     .InjectD, .DummyInstrD, .DummySelD, .DummyW);
+
+  ///////////////////////////////////////////
+  // AMOEBA: random instruction insertion
+  ///////////////////////////////////////////
+  // An insertion is blocked whenever Execute cannot accept a new instruction this cycle
+  // (a divide occupying Execute, or a stall originating in Memory/Writeback) or the
+  // pipeline is about to be flushed anyway.  All of these are Memory/Execute stage
+  // signals that do not depend on the decode-stage instruction, so qualifying the
+  // strobe with them cannot form a combinational loop through the injection mux.
+  // Structural stalls in Decode are deliberately *not* excluded: injecting into a
+  // bubble that would have been inserted anyway costs no performance.
+  assign InsertOkD = ~DivBusyE & ~FDivBusyE & ~StallM & ~TrapM & ~RetM & ~CSRWriteFenceM;
+
+  dummygen dummygen(.clk, .reset,
+    .FreqW(RAND_INSTR_INSERT_FREQ_REGW),
+    .InstrD, .InstrValidD, .InsertOkD,
+    .InjectD, .DummyInstrD, .DummySelD);
 
   lsu #(P) lsu(
     .clk, .reset, .StallM, .FlushM, .StallW, .FlushW,
@@ -279,7 +306,7 @@ module wallypipelinedcore import cvw::*; #(parameter cvw_t P) (
     .LSUStallM, .IFUStallF,
     .FPUStallD, .ExternalStall,
     .DivBusyE, .FDivBusyE,
-    .wfiM, .IntPendingM,
+    .wfiM, .IntPendingM, .InjectD,
     // Stall & flush outputs
     .StallF, .StallD, .StallE, .StallM, .StallW,
     .FlushD, .FlushE, .FlushM, .FlushW);
@@ -306,7 +333,8 @@ module wallypipelinedcore import cvw::*; #(parameter cvw_t P) (
       .PrivilegeModeW, .SATP_REGW,
       .STATUS_MXR, .STATUS_SUM, .STATUS_MPRV, .STATUS_MPP, .STATUS_FS,
       .PMPCFG_ARRAY_REGW, .PMPADDR_ARRAY_REGW,
-      .FRM_REGW, .ENVCFG_CBE, .ENVCFG_PBMTE, .ENVCFG_ADUE, .wfiM, .IntPendingM, .BigEndianM);
+      .FRM_REGW, .ENVCFG_CBE, .ENVCFG_PBMTE, .ENVCFG_ADUE, .wfiM, .IntPendingM, .BigEndianM,
+      .RAND_INSTR_INSERT_FREQ_REGW);
   end else begin
     assign {CSRReadValW, PrivilegeModeW,
             SATP_REGW, STATUS_MXR, STATUS_SUM, STATUS_MPRV, STATUS_MPP, STATUS_FS, FRM_REGW,
@@ -314,6 +342,8 @@ module wallypipelinedcore import cvw::*; #(parameter cvw_t P) (
             ENVCFG_CBE, ENVCFG_PBMTE, ENVCFG_ADUE,
             EPCM, TrapVectorM, RetM, TrapM,
             sfencevmaM, BigEndianM, wfiM, IntPendingM} = '0;
+    // Without a CSR to program it, dummy instruction insertion stays disabled.
+    assign RAND_INSTR_INSERT_FREQ_REGW = '0;
   end
 
   // multiply/divide unit

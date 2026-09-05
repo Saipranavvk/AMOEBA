@@ -45,6 +45,50 @@
 
     `include "rvfi_reference.svh"
 
+`ifdef ECE411_RETIRE_TRACE
+    // ---- retirement trace (AMOEBA random instruction insertion) ------------
+    // One line per instruction that actually retires, real and dummy interleaved
+    // in retirement order.  Writeback is the only place both streams appear
+    // together and the only place flushes have already been filtered out:
+    // anything killed by a branch mispredict or a trap never reaches W, so it is
+    // never printed.
+    //
+    // The core's own InstrD/InstrM pipeline never carries a dummy -- the injection
+    // mux lives inside the IEU, and the IFU keeps piping the real instruction that
+    // is being held in Decode -- so the issued encoding is pipelined separately
+    // here, mirroring the enables and clears of the wrapper's M->W registers.
+    // Compressed instructions therefore appear in expanded 32-bit form and will
+    // not match the .dis byte for byte.
+    logic [31:0] TrcInstrE, TrcInstrM, TrcInstrW;
+    logic [63:0] TrcRetireCtr;
+
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            TrcInstrE <= '0; TrcInstrM <= '0; TrcInstrW <= '0;
+            TrcRetireCtr <= '0;
+        end else begin
+            if (!dut.StallE) TrcInstrE <= dut.FlushE ? '0 : dut.soc.core.ieu.InstrDMux;
+            if (!dut.StallM) TrcInstrM <= dut.FlushM ? '0 : TrcInstrE;
+            if (!dut.StallW) TrcInstrW <= (dut.FlushW & ~dut.TrapM) ? '0 : TrcInstrM;
+
+            // Reads the pre-edge Writeback values, i.e. the instruction retiring now.
+            if (!dut.StallW) begin
+                if (dut.DummyW) begin
+                    TrcRetireCtr <= TrcRetireCtr + 64'd1;
+                    $display("[retire] %5d DUMMY               %08h  rs1=x%0d rs2=x%0d -> p%0d",
+                             TrcRetireCtr, TrcInstrW, TrcInstrW[19:15], TrcInstrW[24:20],
+                             dut.soc.core.ieu.c.DummySelW ? 33 : 32);
+                end else if (dut.InstrValidW && (|dut.PCW)) begin
+                    TrcRetireCtr <= TrcRetireCtr + 64'd1;
+                    $display("[retire] %5d real  pc=%08h  %08h  rd=x%0d rs1=x%0d rs2=x%0d",
+                             TrcRetireCtr, dut.PCW[31:0], TrcInstrW,
+                             TrcInstrW[11:7], TrcInstrW[19:15], TrcInstrW[24:20]);
+                end
+            end
+        end
+    end
+`endif
+
     // ---- misaligned-access flag for the RVFI waiver ------------------------
     // Recomputed here rather than read from mon_itf.mem_addr, which the wrapper
     // has already masked to an 8-byte boundary and so cannot reveal

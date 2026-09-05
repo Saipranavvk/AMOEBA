@@ -259,6 +259,11 @@ module rv64_core_wrapper import cvw::*; (
     assign Rs1D = soc.core.ieu.dp.regf.a1;
     assign Rs2D = soc.core.ieu.dp.regf.a2;
 
+    // AMOEBA: dummy instruction flag, piped M->W alongside the other monitor signals
+    // so it lines up with InstrValidW rather than the core's own W-stage register.
+    logic        DummyM, DummyW;
+    assign DummyM = soc.core.ieu.c.DummyM;
+
     logic [1:0]  MemRWM;
     logic [2:0]  Funct3M;
     logic [63:0] IEUAdrM, WriteDataM, ReadDataW;
@@ -304,6 +309,7 @@ module rv64_core_wrapper import cvw::*; (
             Rs1DataW <= '0; Rs2DataW <= '0;
             Rs1DataE_stash <= '0; Rs2DataE_stash <= '0; E_stash_valid <= 0;
             InterruptTakenPending <= '0;
+            DummyW <= '0;
         end else begin
             // Clear intr pending when the first handler instruction is reported
             if (IntrReported) InterruptTakenPending <= '0;
@@ -321,6 +327,7 @@ module rv64_core_wrapper import cvw::*; (
                 end else begin
                     InstrValidW <= (FlushW & ~TrapM) ? '0 : InstrValidM;
                 end
+                DummyW      <= (FlushW & ~TrapM) ? '0 : DummyM;
                 PCW         <= (FlushW & ~TrapM) ? '0 : PCM;
                 InstrRawW   <= (FlushW & ~TrapM) ? '0 : InstrRawM_r;
                 TrapW       <= TrapM & ~InterruptM;   // rvfi_trap only for exceptions
@@ -377,7 +384,12 @@ module rv64_core_wrapper import cvw::*; (
         return m;
     endfunction
 
-    assign monitor_valid      = InstrValidW & ~StallW & (|PCW);
+    // Injected dummy instructions are already invisible here because the core forces
+    // their InstrValidE/M low, which is what InstrValidW is derived from.  DummyW is
+    // ANDed in as well so that this stays true if that gating is ever relaxed: a dummy
+    // reaching Spike or the RVFI monitor would be reported as a mismatch on every run.
+
+    assign monitor_valid      = InstrValidW & ~StallW & (|PCW) & ~DummyW;
     assign monitor_order      = rvfi_order_ctr;
     // For compressed instructions, only bits[15:0] are valid; zero-extend to 32 bits.
     assign monitor_inst       = (InstrRawW[1:0] != 2'b11) ? {16'h0000, InstrRawW[15:0]} : InstrRawW;

@@ -33,6 +33,7 @@ module icpred import cvw::*;  #(parameter cvw_t P,
   input  logic             StallD, StallE, StallM, StallW,
   input  logic             FlushD, FlushE, FlushM,
   input  logic [31:0]      PostSpillInstrRawF, InstrD,        // Instruction
+  input  logic             InjectD,                           // AMOEBA: Decode holds an injected dummy instruction
   input  logic             BranchD, BranchE,
   input  logic             JumpD, JumpE,
   output logic             BranchM, BranchW,
@@ -100,7 +101,13 @@ module icpred import cvw::*;  #(parameter cvw_t P,
   flopenrc #(4) PredInstrClassRegD(clk, reset, FlushD, ~StallD, {BPCallF, BPReturnF, BPJumpF, BPBranchF}, {BPCallD, BPReturnD, BPJumpD, BPBranchD});
 
   // branch class prediction wrong.
-  assign IClassWrongD = |({BPCallD, BPReturnD, BPJumpD, BPBranchD} ^ {CallD, ReturnD, JumpD, BranchD});
-  assign BPReturnWrongD = BPReturnD ^ ReturnD;
+  // AMOEBA: during an insertion the class signals from the IEU describe the injected
+  // dummy while the registered prediction still describes the real instruction held in
+  // Decode, so the comparison is meaningless for that cycle.  Suppressing it defers the
+  // check by one cycle, when the real instruction issues and both sides agree again.
+  // Without this a real branch would look like a class misprediction and corrupt the
+  // BTB (via IClassWrongM) and the return address stack (via BPReturnWrongD).
+  assign IClassWrongD = |({BPCallD, BPReturnD, BPJumpD, BPBranchD} ^ {CallD, ReturnD, JumpD, BranchD}) & ~InjectD;
+  assign BPReturnWrongD = (BPReturnD ^ ReturnD) & ~InjectD;
 
 endmodule

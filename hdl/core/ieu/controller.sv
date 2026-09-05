@@ -44,6 +44,11 @@ module controller import cvw::*;  #(parameter cvw_t P) (
   output logic        LoadStallD,              // Structural stalls for load, sent to performance counters
   output logic        StoreStallD,             // load after store hazard
   output logic [4:0]  Rs1D, Rs2D, Rs2E,        // Register sources to read in Decode or Execute stage
+  // AMOEBA random instruction insertion
+  input  logic        InjectD,                 // Decode stage holds an injected dummy instruction
+  input  logic        DummySelD,               // Which shadow physical register the dummy writes
+  output logic        DummyW,                  // Writeback stage holds a dummy instruction
+  output logic        DummySelW,               // Pipelined shadow register select
   // Execute stage control signals
   input  logic        StallE, FlushE,          // Stall, flush Execute stage
   input  logic [1:0]  FlagsE,                  // Comparison flags ({eq, lt})
@@ -97,6 +102,9 @@ module controller import cvw::*;  #(parameter cvw_t P) (
   logic [2:0] Funct3D;                         // Funct3 field in Decode stage
   logic [6:0] Funct7D;                         // Funct7 field in Decode stage
   logic [4:0] RdD;                             // Rs1/2 source register / dest reg in Decode stage
+  logic       DummyMaskD;                      // AMOEBA: 0 while a dummy instruction is injected
+  logic       DummyE, DummyM;                  // AMOEBA: pipelined dummy instruction flag
+  logic       DummySelE, DummySelM;            // AMOEBA: pipelined shadow register select
 
   `define CTRLW 24
 
@@ -335,7 +343,7 @@ module controller import cvw::*;  #(parameter cvw_t P) (
 
     // Combine base and bit manipulation signals
     // coverage off: IllegalERegAdr can't occur in rv64gc; only applicable to E mode
-    assign IllegalBaseInstrD = (ControlsD[0] & IllegalBitmanipInstrD) | IllegalERegAdrD ;
+    assign IllegalBaseInstrD = ((ControlsD[0] & IllegalBitmanipInstrD) | IllegalERegAdrD) & ~InjectD;
     // coverage on
     assign RegWriteD = BaseRegWriteD | BRegWriteD;
     assign W64D = BaseW64D | BW64D;
@@ -345,7 +353,7 @@ module controller import cvw::*;  #(parameter cvw_t P) (
   end else begin : bitmanipi
     assign PreALUSelectD = ALUOpD ? Funct3D : 3'b000; // add for address generation when not doing ALU operation
     assign sltD = (Funct3D == 3'b010);
-    assign IllegalBaseInstrD = ControlsD[0] | IllegalERegAdrD ;
+    assign IllegalBaseInstrD = (ControlsD[0] | IllegalERegAdrD) & ~InjectD;
     assign RegWriteD = BaseRegWriteD;
     assign W64D = BaseW64D;
     assign ALUSrcBD = BaseALUSrcBD;
@@ -417,13 +425,21 @@ module controller import cvw::*;  #(parameter cvw_t P) (
   // Decode stage pipeline control register
   flopenrc #(1)  controlregD(clk, reset, FlushD, ~StallD, 1'b1, InstrValidD);
 
+  // AMOEBA: mask for control signals an injected dummy instruction must never assert.
+  // The stage 1 capture filter admits ALU-class instructions only, so every masked
+  // signal should already be low; the mask is defensive and the assertions in the
+  // testbench check that it never actually has to do anything.
+  assign DummyMaskD = ~InjectD;
+
   // Execute stage pipeline control register and logic
-  flopenrc #(45) controlregE(clk, reset, FlushE, ~StallE,
-                           {ALUSelectD, RegWriteD, ResultSrcD, MemRWD, JumpD, BranchD, ALUSrcAD, ALUSrcBD, ALUResultSrcD, CSRReadD, CSRWriteD, PrivilegedD, Funct3D, Funct7D, W64D, BUW64D, SubArithD, MDUD, AtomicD, InvalidateICacheD, FlushDCacheD, FenceD, CMOpD, IFUPrefetchD, LSUPrefetchD, CZeroD, InstrValidD},
-                           {ALUSelectE, IEURegWriteE, ResultSrcE, MemRWE, JumpE, BranchE, ALUSrcAE, ALUSrcBE, ALUResultSrcE, CSRReadE, CSRWriteE, PrivilegedE, Funct3E, Funct7E, W64E, UW64E, SubArithE, MDUE, AtomicE, InvalidateICacheE, FlushDCacheE, FenceE, CMOpE, IFUPrefetchE, LSUPrefetchE, CZeroE, InstrValidE});
+  flopenrc #(47) controlregE(clk, reset, FlushE, ~StallE,
+                           {ALUSelectD, RegWriteD, ResultSrcD, MemRWD & {2{DummyMaskD}}, JumpD & DummyMaskD, BranchD & DummyMaskD, ALUSrcAD, ALUSrcBD, ALUResultSrcD, CSRReadD & DummyMaskD, CSRWriteD & DummyMaskD, PrivilegedD & DummyMaskD, Funct3D, Funct7D, W64D, BUW64D, SubArithD, MDUD & DummyMaskD, AtomicD & {2{DummyMaskD}}, InvalidateICacheD & DummyMaskD, FlushDCacheD & DummyMaskD, FenceD & DummyMaskD, CMOpD & {4{DummyMaskD}}, IFUPrefetchD & DummyMaskD, LSUPrefetchD & DummyMaskD, CZeroD, InstrValidD & DummyMaskD, InjectD, DummySelD},
+                           {ALUSelectE, IEURegWriteE, ResultSrcE, MemRWE, JumpE, BranchE, ALUSrcAE, ALUSrcBE, ALUResultSrcE, CSRReadE, CSRWriteE, PrivilegedE, Funct3E, Funct7E, W64E, UW64E, SubArithE, MDUE, AtomicE, InvalidateICacheE, FlushDCacheE, FenceE, CMOpE, IFUPrefetchE, LSUPrefetchE, CZeroE, InstrValidE, DummyE, DummySelE});
   flopenrc #(5)  Rs1EReg(clk, reset, FlushE, ~StallE, Rs1D, Rs1E);
   flopenrc #(5)  Rs2EReg(clk, reset, FlushE, ~StallE, Rs2D, Rs2E);
-  flopenrc #(5)  RdEReg(clk, reset, FlushE, ~StallE, RdD, RdE);
+  // A dummy's architectural destination reads as x0 so it can never forward to a real
+  // instruction; the register file redirects its write to a shadow register instead.
+  flopenrc #(5)  RdEReg(clk, reset, FlushE, ~StallE, InjectD ? 5'b0 : RdD, RdE);
 
   // Branch Logic
   //  The comparator handles both signed and unsigned branches using BranchSignedE
@@ -442,15 +458,15 @@ module controller import cvw::*;  #(parameter cvw_t P) (
   assign IntDivE = MDUE & Funct3E[2]; // Integer division operation
 
   // Memory stage pipeline control register
-  flopenrc #(25) controlregM(clk, reset, FlushM, ~StallM,
-                         {RegWriteE, ResultSrcE, MemRWE, CSRReadE, CSRWriteE, PrivilegedE, Funct3E, FWriteIntE, AtomicE, InvalidateICacheE, FlushDCacheE, FenceE, InstrValidE, IntDivE, CMOpE, LSUPrefetchE},
-                         {RegWriteM, ResultSrcM, MemRWM, CSRReadM, CSRWriteM, PrivilegedM, Funct3M, FWriteIntM, AtomicM, InvalidateICacheM, FlushDCacheM, FenceM, InstrValidM, IntDivM, CMOpM, LSUPrefetchM});
+  flopenrc #(27) controlregM(clk, reset, FlushM, ~StallM,
+                         {RegWriteE, ResultSrcE, MemRWE, CSRReadE, CSRWriteE, PrivilegedE, Funct3E, FWriteIntE, AtomicE, InvalidateICacheE, FlushDCacheE, FenceE, InstrValidE, IntDivE, CMOpE, LSUPrefetchE, DummyE, DummySelE},
+                         {RegWriteM, ResultSrcM, MemRWM, CSRReadM, CSRWriteM, PrivilegedM, Funct3M, FWriteIntM, AtomicM, InvalidateICacheM, FlushDCacheM, FenceM, InstrValidM, IntDivM, CMOpM, LSUPrefetchM, DummyM, DummySelM});
   flopenrc #(5)  RdMReg(clk, reset, FlushM, ~StallM, RdE, RdM);
 
   // Writeback stage pipeline control register
-  flopenrc #(5) controlregW(clk, reset, FlushW, ~StallW,
-                         {RegWriteM, ResultSrcM, IntDivM},
-                         {RegWriteW, ResultSrcW, IntDivW});
+  flopenrc #(7) controlregW(clk, reset, FlushW, ~StallW,
+                         {RegWriteM, ResultSrcM, IntDivM, DummyM, DummySelM},
+                         {RegWriteW, ResultSrcW, IntDivW, DummyW, DummySelW});
   flopenrc #(5) RdWReg(clk, reset, FlushW, ~StallW, RdM, RdW);
 
   // Flush F, D, and E stages on a CSR write or Fence.I or SFence.VMA

@@ -60,6 +60,7 @@ module ifu import cvw::*;  #(parameter cvw_t P) (
   input  logic [P.XLEN-1:0]    EPCM,                                     // Exception Program counter from privileged unit
   input  logic [P.XLEN-1:0]    TrapVectorM,                              // Trap vector, from privileged unit
   input  logic                 RetM, TrapM,                              // return instruction, or trap
+  input  logic                 InjectD,                                  // AMOEBA: Decode holds an injected dummy instruction
   output logic [31:0]          InstrD,                                   // The decoded instruction in Decode stage
   output logic [31:0]          InstrM,                                   // The decoded instruction in Memory stage
   output logic [31:0]          InstrOrigM,                               // Original compressed or uncompressed instruction in Memory stage for Illegal Instruction MTVAL
@@ -350,7 +351,7 @@ module ifu import cvw::*;  #(parameter cvw_t P) (
                 .StallF, .StallD, .StallE, .StallM, .StallW,
                 .FlushD, .FlushE, .FlushM, .FlushW, .InstrValidD, .InstrValidE,
                 .BranchD, .BranchE, .JumpD, .JumpE,
-                .InstrD, .PCNextF, .PCPlus2or4F, .PC1NextF, .PCE, .PCM, .PCSrcE, .IEUAdrE, .IEUAdrM, .PCF, .NextValidPCE,
+                .InstrD, .InjectD, .PCNextF, .PCPlus2or4F, .PC1NextF, .PCE, .PCM, .PCSrcE, .IEUAdrE, .IEUAdrM, .PCF, .NextValidPCE,
                 .PCD, .PCLinkE, .IClassM, .BPWrongE, .PostSpillInstrRawF, .BPWrongM,
                 .BPDirWrongM, .BTAWrongM, .RASPredPCWrongM, .IClassWrongM);
 
@@ -361,7 +362,7 @@ module ifu import cvw::*;  #(parameter cvw_t P) (
     logic ReturnD, ReturnE, ReturnM, ReturnW;
     assign BPWrongE = PCSrcE;
     icpred #(P, 0) icpred(.clk, .reset, .StallD, .StallE, .StallM, .StallW, .FlushD, .FlushE, .FlushM,
-      .PostSpillInstrRawF, .InstrD, .BranchD, .BranchE, .JumpD, .JumpE, .BranchM, .BranchW, .JumpM, .JumpW,
+      .PostSpillInstrRawF, .InstrD, .InjectD, .BranchD, .BranchE, .JumpD, .JumpE, .BranchM, .BranchW, .JumpM, .JumpW,
       .CallD, .CallE, .CallM, .CallW, .ReturnD, .ReturnE, .ReturnM, .ReturnW,
       .BTBCallF(1'b0), .BTBReturnF(1'b0), .BTBJumpF(1'b0),
       .BTBBranchF(1'b0), .BPCallF(), .BPReturnF(), .BPJumpF(), .BPBranchF(), .IClassWrongM,

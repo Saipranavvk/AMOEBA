@@ -51,7 +51,8 @@ module csrm  import cvw::*;  #(parameter cvw_t P) (
   /* verilator lint_on UNDRIVEN */
   output logic                     WriteMSTATUSM, WriteMSTATUSHM,
   output logic                     IllegalCSRMAccessM, IllegalCSRMWriteReadonlyM,
-  output logic [63:0]              MENVCFG_REGW
+  output logic [63:0]              MENVCFG_REGW,
+  output logic [31:0]              RAND_INSTR_INSERT_FREQ_REGW
 );
 
   logic [P.PA_BITS-3:0]            PMPADDR_ARRAY_PREGRAIN_REGW[P.PMP_ENTRIES-1:0];
@@ -62,6 +63,7 @@ module csrm  import cvw::*;  #(parameter cvw_t P) (
   logic                            WriteMTVECM, WriteMEDELEGM, WriteMIDELEGM;
   logic                            WriteMSCRATCHM, WriteMEPCM, WriteMCAUSEM, WriteMTVALM;
   logic                            WriteMCOUNTERENM, WriteMCOUNTINHIBITM;
+  logic                            WriteRANDINSTRFREQM;
 
   // Machine CSRs
   localparam MVENDORID     = 12'hF11;
@@ -97,6 +99,9 @@ module csrm  import cvw::*;  #(parameter cvw_t P) (
   localparam DCSR          = 12'h7B0;
   localparam DPC           = 12'h7B1;
   localparam DSCRATCH0     = 12'h7B2;
+  // AMOEBA custom M-mode CSR (0x7C0-0x7FF is the machine-mode custom read/write range).
+  // Divider period for random dummy-instruction insertion; 0 disables the feature.
+  localparam RANDINSTRFREQ = 12'h7C0;
   localparam DSCRATCH1     = 12'h7B3;
   /* verilator lint_off UNUSEDPARAM */
   // Constants
@@ -163,6 +168,7 @@ module csrm  import cvw::*;  #(parameter cvw_t P) (
   assign WriteMTVALM         = MTrapM | (CSRMWriteM & (CSRAdrM == MTVAL));
   assign WriteMCOUNTERENM    = CSRMWriteM & (CSRAdrM == MCOUNTEREN);
   assign WriteMCOUNTINHIBITM = CSRMWriteM & (CSRAdrM == MCOUNTINHIBIT);
+  assign WriteRANDINSTRFREQM = CSRMWriteM & (CSRAdrM == RANDINSTRFREQ);
 
   assign IllegalCSRMWriteReadonlyM = UngatedCSRMWriteM & (CSRAdrM == MVENDORID | CSRAdrM == MARCHID | CSRAdrM == MIMPID | CSRAdrM == MHARTID | CSRAdrM == MCONFIGPTR);
 
@@ -179,6 +185,7 @@ module csrm  import cvw::*;  #(parameter cvw_t P) (
   flopenr #(P.XLEN) MCAUSEreg(clk, reset, WriteMCAUSEM, {NextCauseM[5], {(P.XLEN-6){1'b0}}, NextCauseM[4:0]}, MCAUSE_REGW);
   flopenr #(P.XLEN) MTVALreg(clk, reset, WriteMTVALM, NextMtvalM, MTVAL_REGW);
   flopenr #(32)   MCOUNTINHIBITreg(clk, reset, WriteMCOUNTINHIBITM, {CSRWriteValM[31:2], 1'b0, CSRWriteValM[0]}, MCOUNTINHIBIT_REGW);
+  flopenr #(32)   RANDINSTRFREQreg(clk, reset, WriteRANDINSTRFREQM, CSRWriteValM[31:0], RAND_INSTR_INSERT_FREQ_REGW);
   if (P.U_SUPPORTED) begin : mcounteren // MCOUNTEREN only exists when user mode is supported
     flopenr #(32)   MCOUNTERENreg(clk, reset, WriteMCOUNTERENM, CSRWriteValM[31:0], MCOUNTEREN_REGW);
   end else assign MCOUNTEREN_REGW = '0;
@@ -273,6 +280,7 @@ module csrm  import cvw::*;  #(parameter cvw_t P) (
       MENVCFGH:      if (P.U_SUPPORTED & P.XLEN==32) CSRMReadValM = MENVCFGH_REGW;
                      else IllegalCSRMAccessM = 1'b1;
       MCOUNTINHIBIT: CSRMReadValM = {{(P.XLEN-32){1'b0}}, MCOUNTINHIBIT_REGW};
+      RANDINSTRFREQ: CSRMReadValM = {{(P.XLEN-32){1'b0}}, RAND_INSTR_INSERT_FREQ_REGW};
       default:       IllegalCSRMAccessM = 1'b1;
     endcase
   end

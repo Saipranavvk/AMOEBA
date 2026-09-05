@@ -38,6 +38,7 @@ module bpred import cvw::*;  #(parameter cvw_t P) (
   // Fetch stage
   // the prediction
   input  logic [31:0]      InstrD,                    // Decompressed decode stage instruction. Used to decode instruction class
+  input  logic             InjectD,                   // AMOEBA: Decode holds an injected dummy instruction
   input  logic [P.XLEN-1:0] PCNextF,                   // Next Fetch Address
   input  logic [P.XLEN-1:0] PCPlus2or4F,               // PCF+2/4
   output logic [P.XLEN-1:0] PC1NextF,                  // Branch Predictor predicted or corrected fetch address on miss prediction
@@ -158,7 +159,7 @@ module bpred import cvw::*;  #(parameter cvw_t P) (
       .IClassW({CallW, ReturnW, JumpW, BranchW}));
 
   icpred #(P, `INSTR_CLASS_PRED) icpred(.clk, .reset, .StallD, .StallE, .StallM, .StallW, .FlushD, .FlushE, .FlushM,
-    .PostSpillInstrRawF, .InstrD, .BranchD, .BranchE, .JumpD, .JumpE, .BranchM, .BranchW, .JumpM, .JumpW,
+    .PostSpillInstrRawF, .InstrD, .InjectD, .BranchD, .BranchE, .JumpD, .JumpE, .BranchM, .BranchW, .JumpM, .JumpW,
     .CallD, .CallE, .CallM, .CallW, .ReturnD, .ReturnE, .ReturnM, .ReturnW, .BTBCallF, .BTBReturnF, .BTBJumpF,
     .BTBBranchF, .BPCallF, .BPReturnF, .BPJumpF, .BPBranchF, .IClassWrongM, .BPReturnWrongD);
 

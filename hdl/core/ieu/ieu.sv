@@ -78,7 +78,12 @@ module ieu import cvw::*;  #(parameter cvw_t P) (
   output logic              LoadStallD,                      // Structural stalls for load, sent to performance counters
   output logic              StoreStallD,                     // load after store hazard
   output logic              CSRReadM, CSRWriteM, PrivilegedM,// CSR read, CSR write, is privileged instruction
-  output logic              CSRWriteFenceM                   // CSR write or fence instruction needs to flush subsequent instructions
+  output logic              CSRWriteFenceM,                  // CSR write or fence instruction needs to flush subsequent instructions
+  // AMOEBA random instruction insertion
+  input  logic              InjectD,                         // Inject DummyInstrD into Decode this cycle
+  input  logic [31:0]       DummyInstrD,                     // Dummy instruction to inject
+  input  logic              DummySelD,                       // Which shadow physical register the dummy writes
+  output logic              DummyW                           // Writeback stage holds a dummy instruction
 );
 
   logic [2:0] ImmSrcD;                                       // Select type of immediate extension
@@ -97,6 +102,13 @@ module ieu import cvw::*;  #(parameter cvw_t P) (
 
   logic [6:0] Funct7E;
 
+  // AMOEBA: the injection point.  Only the IEU sees the dummy; the IFU's branch
+  // predictor and the FPU keep decoding the real instruction, which is being held
+  // in Decode for one cycle and will issue normally next cycle.
+  logic [31:0] InstrDMux;
+  logic        DummySelW;
+  assign InstrDMux = InjectD ? DummyInstrD : InstrD;
+
   // Forwarding signals
   logic [4:0] Rs1D, Rs2D;
   logic [4:0] Rs2E;                                          // Source registers
@@ -107,7 +119,8 @@ module ieu import cvw::*;  #(parameter cvw_t P) (
   logic [1:0] CZeroE;                                        // {czero.nez, czero.eqz} instructions active
 
   controller #(P) c(
-    .clk, .reset, .StallD, .FlushD, .InstrD, .STATUS_FS, .ENVCFG_CBE, .ImmSrcD,
+    .clk, .reset, .StallD, .FlushD, .InstrD(InstrDMux), .STATUS_FS, .ENVCFG_CBE, .ImmSrcD,
+    .InjectD, .DummySelD, .DummyW, .DummySelW,
     .IllegalIEUFPUInstrD, .IllegalBaseInstrD,
     .StructuralStallD, .LoadStallD, .StoreStallD, .Rs1D, .Rs2D,  .Rs2E,
     .StallE, .FlushE, .FlagsE, .FWriteIntE,
@@ -121,7 +134,8 @@ module ieu import cvw::*;  #(parameter cvw_t P) (
     .RdW, .RdE, .RdM);
 
   datapath #(P) dp(
-    .clk, .reset, .ImmSrcD, .InstrD, .Rs1D, .Rs2D, .Rs2E, .StallE, .FlushE, .ForwardAE, .ForwardBE, .W64E, .UW64E, .SubArithE,
+    .clk, .reset, .ImmSrcD, .InstrD(InstrDMux), .Rs1D, .Rs2D, .Rs2E, .StallE, .FlushE, .ForwardAE, .ForwardBE, .W64E, .UW64E, .SubArithE,
+    .DummyW, .DummySelW,
     .Funct3E, .Funct7E, .ALUSrcAE, .ALUSrcBE, .ALUResultSrcE, .ALUSelectE, .JumpE, .BranchSignedE,
     .PCE, .PCLinkE, .FlagsE, .IEUAdrE, .ForwardedSrcAE, .ForwardedSrcBE, .BSelectE, .ZBBSelectE, .BALUControlE, .BMUActiveE, .CZeroE,
     .StallM, .FlushM, .FWriteIntM, .FIntResM, .SrcAM, .WriteDataM, .FCvtIntW,

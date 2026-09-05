@@ -34,6 +34,7 @@ module hazard (
   input  logic  FPUStallD, ExternalStall,
   input  logic  DivBusyE, FDivBusyE,
   input  logic  wfiM, IntPendingM,
+  input  logic  InjectD,
   // Stall & flush outputs
   output logic StallF, StallD, StallE, StallM, StallW,
   output logic FlushD, FlushE, FlushM, FlushW
@@ -83,7 +84,9 @@ module hazard (
   //    The IFU stalls the entire pipeline rather than just Fetch to avoid complications with instructions later in the pipeline causing Exceptions
   //    A trap could be asserted at the start of a IFU/LSU stall, and should flush the memory operation
   assign StallFCause = 1'b0;
-  assign StallDCause = (StructuralStallD | FPUStallD) & ~FlushDCause;
+  // AMOEBA: a dummy instruction insertion holds Decode for one cycle so the real
+  // instruction is replayed, while Execute accepts the injected instruction below.
+  assign StallDCause = (StructuralStallD | FPUStallD | InjectD) & ~FlushDCause;
   assign StallECause = (DivBusyE | FDivBusyE) & ~FlushECause;
   assign StallMCause = WFIStallM & ~FlushMCause;
   // Need to gate IFUStallF when the equivalent FlushFCause = FlushDCause = 1.
@@ -103,7 +106,9 @@ module hazard (
   // detect the first stage that is not stalled
 
   assign LatestUnstalledD = ~StallD & StallF; // coverage tag: StallD always equals StallF
-  assign LatestUnstalledE = ~StallE & StallD;
+  // AMOEBA: Decode stalling while Execute advances normally inserts a bubble into Execute.
+  // During an insertion that slot carries the dummy instruction instead, so suppress the flush.
+  assign LatestUnstalledE = ~StallE & StallD & ~InjectD;
   assign LatestUnstalledM = ~StallM & StallE;
   assign LatestUnstalledW = ~StallW & StallM;
 

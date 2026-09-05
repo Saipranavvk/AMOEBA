@@ -33,12 +33,24 @@ module regfile #(parameter XLEN, E_SUPPORTED) (
   input  logic             we3,                 // Write enable
   input  logic [4:0]       a1, a2, a3,          // Source registers to read (a1, a2), destination register to write (a3)
   input  logic [XLEN-1:0]  wd3,                 // Write data for port 3
+  input  logic             DummyW,              // AMOEBA: write is from an inserted dummy instruction
+  input  logic             DummySelW,           // AMOEBA: which shadow register the dummy writes
   output logic [XLEN-1:0]  rd1, rd2);           // Read data for ports 1, 2
 
-  localparam NUMREGS = E_SUPPORTED ? 16 : 32;   // only 16 registers in E mode
+  localparam ARCHREGS = E_SUPPORTED ? 16 : 32;  // only 16 registers in E mode
+  // AMOEBA: two shadow registers above the architectural ones absorb writes from
+  // inserted dummy instructions, so a dummy switches the register file like a real
+  // instruction without disturbing architectural state.
+  localparam NUMREGS  = ARCHREGS + 2;
+
+  localparam logic [5:0] SHADOW0 = 6'(ARCHREGS);
 
   logic [XLEN-1:0] rf[NUMREGS-1:1];
+  logic [5:0]      WriteIdx;
   integer i;
+
+  // Dummy writes are redirected to a shadow register and ignore a3 entirely.
+  assign WriteIdx = DummyW ? (SHADOW0 | {5'b0, DummySelW}) : {1'b0, a3};
 
   // Three ported register file
   // Read two ports combinationally (a1/rd1, a2/rd2)
@@ -51,7 +63,7 @@ module regfile #(parameter XLEN, E_SUPPORTED) (
 
   always_ff @(negedge clk)
     if (reset) for(i=1; i<NUMREGS; i++) rf[i] <= '0;
-    else       if (we3)                 rf[a3] <= wd3;
+    else       if (we3)                 rf[WriteIdx] <= wd3;
 
   assign rd1 = (a1 != 0) ? rf[a1] : 0;
   assign rd2 = (a2 != 0) ? rf[a2] : 0;
