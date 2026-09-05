@@ -100,7 +100,9 @@ module rv64_core_wrapper import cvw::*; (
     output logic [7:0]   minstret_rmask,
     output logic [7:0]   minstret_wmask,
     input  logic [63:0]  minstret_rdata,
-    output logic [63:0]  minstret_wdata
+    output logic [63:0]  minstret_wdata,
+
+    input  logic         ecc_inject_en     // ECC inject enable (for DFT / ECC test)
 );
 
     `include "parameter-defs.vh"
@@ -182,7 +184,9 @@ module rv64_core_wrapper import cvw::*; (
         .SDCIn      (1'b0),
         .SDCCmd     (),
         .SDCCS      (),
-        .SDCCLK     ()
+        .SDCCLK     (),
+        .ecc_inject_en (ecc_inject_en),
+        .PrivModeUncorrectableFaultW ()
     );
 
     // -------------------------------------------------------------------------

@@ -30,6 +30,7 @@
 module wallypipelinedsoc import cvw::*; #(parameter cvw_t P)  (
   input  logic                clk,
   input  logic                reset_ext,        // external asynchronous reset pin
+  input  logic                ecc_inject_en,    // ECC inject enable (for DFT / ECC test)
   output logic                reset,            // reset synchronized to clk to prevent races on release
   // AHB Interface
   input  logic [P.AHBW-1:0]   HRDATAEXT,
@@ -79,6 +80,7 @@ module wallypipelinedsoc import cvw::*; #(parameter cvw_t P)  (
 
   // instantiate processor and internal memories
   wallypipelinedcore #(P) core(.clk, .reset,
+    .ecc_inject_en,
     .MTimerInt, .MExtInt, .SExtInt, .MSwInt, .MTIME_CLINT,
     .HRDATA, .HREADY, .HRESP, .HCLK, .HRESETn, .HADDR, .HWDATA, .HWSTRB,
     .HWRITE, .HSIZE, .HBURST, .HPROT, .HTRANS, .HMASTLOCK, .ExternalStall,

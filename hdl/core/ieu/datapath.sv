@@ -3,7 +3,11 @@
 //
 // Written: David_Harris@hmc.edu, Sarah.Harris@unlv.edu
 // Created: 9 January 2021
-// Modified:
+// Modified: Saipranavvk saipranavvk@gmail.com 4 September 2026
+//           ECC hardening: all seven XLEN-wide data pipeline registers
+//           replaced with flopenrc_ecc instances.  The register file now
+//           exposes sec/ded error ports.  All SEC/DED signals are OR'd into
+//           RegEccSecErrW / RegEccDedErrW and exported to the privileged unit.
 //
 // Purpose: Wally Integer Datapath
 //
@@ -16,20 +20,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 //
-// Licensed under the Solderpad Hardware License v 2.1 (the “License”); you may not use this file
+// Licensed under the Solderpad Hardware License v 2.1 (the "License"); you may not use this file
 // except in compliance with the License, or, at your option, the Apache License version 2.0. You
 // may obtain a copy of the License at
 //
 // https://solderpad.org/licenses/SHL-2.1/
 //
 // Unless required by applicable law or agreed to in writing, any work distributed under the
-// License is distributed on an “AS IS” BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+// License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
 // either express or implied. See the License for the specific language governing permissions
 // and limitations under the License.
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
 module datapath import cvw::*;  #(parameter cvw_t P) (
   input  logic              clk, reset,
+  // ECC inject enable (from top-level, for DFT)
+  input  logic              ecc_inject_en,
   // Decode stage signals
   input  logic [2:0]        ImmSrcD,                 // Selects type of immediate extension
   input  logic [31:0]       InstrD,                  // Instruction in Decode stage
@@ -72,8 +78,11 @@ module datapath import cvw::*;  #(parameter cvw_t P) (
   input  logic [P.XLEN-1:0] CSRReadValW,             // CSR read result
   input  logic [P.XLEN-1:0] MDUResultW,              // MDU (Multiply/divide unit) result
   input  logic [P.XLEN-1:0] FIntDivResultW,          // FPU's integer divide result
-  input  logic [4:0]        RdW                      // Destination register
-   // Hazard Unit signals
+  input  logic [4:0]        RdW,                     // Destination register
+  // ECC error aggregation outputs
+  output logic              RegEccSecErrW,           // any correctable ECC error (regfile or pipeline reg)
+  output logic              RegEccDedErrW            // any uncorrectable ECC error → fault signal
+  // Hazard Unit signals
 );
 
   // Fetch stage signals
@@ -95,14 +104,35 @@ module datapath import cvw::*;  #(parameter cvw_t P) (
   logic [P.XLEN-1:0] IFCvtResultW;                   // Result from IEU, signle-cycle FPU op, or 2-cycle FCVT float to int
   logic [P.XLEN-1:0] MulDivResultW;                  // Multiply always comes from MDU.  Divide could come from MDU or FPU (when using fdivsqrt for integer division)
 
-  // Decode stage
-  regfile #(P.XLEN, P.E_SUPPORTED) regf(clk, reset, RegWriteW, Rs1D, Rs2D, RdW, ResultW, R1D, R2D);
-  extend #(P)        ext(.InstrD(InstrD[31:7]), .ImmSrcD, .ImmExtD);
+  // ECC error signals from register file read ports
+  logic sec_err_rd1, ded_err_rd1;
+  logic sec_err_rd2, ded_err_rd2;
 
-  // Execute stage pipeline register and logic
-  flopenrc #(P.XLEN) RD1EReg(clk, reset, FlushE, ~StallE, R1D, R1E);
-  flopenrc #(P.XLEN) RD2EReg(clk, reset, FlushE, ~StallE, R2D, R2E);
-  flopenrc #(P.XLEN) ImmExtEReg(clk, reset, FlushE, ~StallE, ImmExtD, ImmExtE);
+  // ECC error signals from the 7 pipeline registers (sec / ded per instance)
+  logic sec_rd1e, ded_rd1e;   // R1D → R1E
+  logic sec_rd2e, ded_rd2e;   // R2D → R2E
+  logic sec_imme, ded_imme;   // ImmExtD → ImmExtE
+  logic sec_srcam, ded_srcam; // SrcAE → SrcAM
+  logic sec_ieumm, ded_ieumm; // IEUResultE → IEUResultM
+  logic sec_wdm,  ded_wdm;    // ForwardedSrcBE → WriteDataM
+  logic sec_ifrw, ded_ifrw;   // IFResultM → IFResultW
+
+  // Decode stage
+  regfile #(P.XLEN, P.E_SUPPORTED) regf(
+    .clk, .reset,
+    .we3(RegWriteW), .a1(Rs1D), .a2(Rs2D), .a3(RdW),
+    .wd3(ResultW),
+    .rd1(R1D), .rd2(R2D),
+    .inject_en(ecc_inject_en),
+    .sec_err_rd1, .ded_err_rd1,
+    .sec_err_rd2, .ded_err_rd2
+  );
+  extend #(P) ext(.InstrD(InstrD[31:7]), .ImmSrcD, .ImmExtD);
+
+  // Execute stage pipeline registers (ECC-protected)
+  flopenrc_ecc #(P.XLEN) RD1EReg   (clk, reset, FlushE, ~StallE, ecc_inject_en, R1D,             R1E,        sec_rd1e,  ded_rd1e);
+  flopenrc_ecc #(P.XLEN) RD2EReg   (clk, reset, FlushE, ~StallE, ecc_inject_en, R2D,             R2E,        sec_rd2e,  ded_rd2e);
+  flopenrc_ecc #(P.XLEN) ImmExtEReg(clk, reset, FlushE, ~StallE, ecc_inject_en, ImmExtD,         ImmExtE,    sec_imme,  ded_imme);
 
   mux3  #(P.XLEN)  faemux(R1E, ResultW, IFResultM, ForwardAE, ForwardedSrcAE);
   mux3  #(P.XLEN)  fbemux(R2E, ResultW, IFResultM, ForwardBE, ForwardedSrcBE);
@@ -113,13 +143,13 @@ module datapath import cvw::*;  #(parameter cvw_t P) (
   mux2  #(P.XLEN)  altresultmux(ImmExtE, PCLinkE, JumpE, AltResultE);
   mux2  #(P.XLEN)  ieuresultmux(ALUResultE, AltResultE, ALUResultSrcE, IEUResultE);
 
-  // Memory stage pipeline register
-  flopenrc #(P.XLEN) SrcAMReg(clk, reset, FlushM, ~StallM, SrcAE, SrcAM);
-  flopenrc #(P.XLEN) IEUResultMReg(clk, reset, FlushM, ~StallM, IEUResultE, IEUResultM);
-  flopenrc #(P.XLEN) WriteDataMReg(clk, reset, FlushM, ~StallM, ForwardedSrcBE, WriteDataM);
+  // Memory stage pipeline registers (ECC-protected)
+  flopenrc_ecc #(P.XLEN) SrcAMReg     (clk, reset, FlushM, ~StallM, ecc_inject_en, SrcAE,          SrcAM,      sec_srcam, ded_srcam);
+  flopenrc_ecc #(P.XLEN) IEUResultMReg(clk, reset, FlushM, ~StallM, ecc_inject_en, IEUResultE,     IEUResultM, sec_ieumm, ded_ieumm);
+  flopenrc_ecc #(P.XLEN) WriteDataMReg(clk, reset, FlushM, ~StallM, ecc_inject_en, ForwardedSrcBE, WriteDataM, sec_wdm,   ded_wdm);
 
-  // Writeback stage pipeline register and logic
-  flopenrc #(P.XLEN) IFResultWReg(clk, reset, FlushW, ~StallW, IFResultM, IFResultW);
+  // Writeback stage pipeline register (ECC-protected)
+  flopenrc_ecc #(P.XLEN) IFResultWReg (clk, reset, FlushW, ~StallW, ecc_inject_en, IFResultM,      IFResultW,  sec_ifrw,  ded_ifrw);
 
   // floating point inputs: FIntResM comes from fclass, fcmp, fmv; FCvtIntResW comes from fcvt
   if (P.F_SUPPORTED) begin : fpmux
@@ -140,4 +170,13 @@ module datapath import cvw::*;  #(parameter cvw_t P) (
   // handle Store Conditional result if atomic extension supported
   if (P.ZALRSC_SUPPORTED) assign SCResultW = {{(P.XLEN-1){1'b0}}, SquashSCW};
   else                    assign SCResultW = '0;
+
+  // ECC error aggregation
+  assign RegEccSecErrW = sec_err_rd1 | sec_err_rd2
+                       | sec_rd1e | sec_rd2e | sec_imme
+                       | sec_srcam | sec_ieumm | sec_wdm | sec_ifrw;
+  assign RegEccDedErrW = ded_err_rd1 | ded_err_rd2
+                       | ded_rd1e | ded_rd2e | ded_imme
+                       | ded_srcam | ded_ieumm | ded_wdm | ded_ifrw;
+
 endmodule

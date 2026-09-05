@@ -29,6 +29,8 @@
 
 module wallypipelinedcore import cvw::*; #(parameter cvw_t P) (
    input  logic                  clk, reset,
+   // ECC inject enable (from top-level, for DFT)
+   input  logic                  ecc_inject_en,
    // Privileged
    input  logic                  MTimerInt, MExtInt, SExtInt, MSwInt,
    input  logic [63:0]           MTIME_CLINT,
@@ -171,6 +173,8 @@ module wallypipelinedcore import cvw::*; #(parameter cvw_t P) (
   logic                          BranchD, BranchE, JumpD, JumpE;
   logic                          DCacheStallM, ICacheStallF;
   logic                          wfiM, IntPendingM;
+  logic                          RegEccSecErrW, RegEccDedErrW;  // ECC error aggregates from IEU
+  logic                          PrivModeUncorrectableFaultW_priv; // from privileged unit before ECC OR
 
   // instruction fetch unit: PC, branch prediction, instruction cache
   ifu #(P) ifu(.clk, .reset,
@@ -197,6 +201,7 @@ module wallypipelinedcore import cvw::*; #(parameter cvw_t P) (
 
   // integer execution unit: integer register file, datapath and controller
   ieu #(P) ieu(.clk, .reset,
+     .ecc_inject_en, .RegEccSecErrW, .RegEccDedErrW,
      // Decode Stage interface
      .InstrD, .STATUS_FS, .ENVCFG_CBE, .IllegalIEUFPUInstrD, .IllegalBaseInstrD,
      // Execute Stage interface
@@ -308,15 +313,18 @@ module wallypipelinedcore import cvw::*; #(parameter cvw_t P) (
       .STATUS_MXR, .STATUS_SUM, .STATUS_MPRV, .STATUS_MPP, .STATUS_FS,
       .PMPCFG_ARRAY_REGW, .PMPADDR_ARRAY_REGW,
       .FRM_REGW, .ENVCFG_CBE, .ENVCFG_PBMTE, .ENVCFG_ADUE, .wfiM, .IntPendingM, .BigEndianM,
-      .PrivModeUncorrectableFaultW);
+      .PrivModeUncorrectableFaultW(PrivModeUncorrectableFaultW_priv));
   end else begin
     assign {CSRReadValW, PrivilegeModeW,
             SATP_REGW, STATUS_MXR, STATUS_SUM, STATUS_MPRV, STATUS_MPP, STATUS_FS, FRM_REGW,
             // PMPCFG_ARRAY_REGW, PMPADDR_ARRAY_REGW,
             ENVCFG_CBE, ENVCFG_PBMTE, ENVCFG_ADUE,
             EPCM, TrapVectorM, RetM, TrapM,
-            sfencevmaM, BigEndianM, wfiM, IntPendingM, PrivModeUncorrectableFaultW} = '0;
+            sfencevmaM, BigEndianM, wfiM, IntPendingM, PrivModeUncorrectableFaultW_priv} = '0;
   end
+
+  // Combine privilege-mode TMR fault with IEU ECC uncorrectable (DED) fault
+  assign PrivModeUncorrectableFaultW = PrivModeUncorrectableFaultW_priv | RegEccDedErrW;
 
   // multiply/divide unit
   if (P.ZMMUL_SUPPORTED) begin : mdu
