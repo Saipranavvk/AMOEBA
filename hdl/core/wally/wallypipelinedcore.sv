@@ -174,6 +174,7 @@ module wallypipelinedcore import cvw::*; #(parameter cvw_t P) (
   logic                          DCacheStallM, ICacheStallF;
   logic                          wfiM, IntPendingM;
   logic                          RegEccSecErrW, RegEccDedErrW;  // ECC error aggregates from IEU
+  logic                          RegEccDedErrSticky;              // latched DED fault — cleared only by reset
   logic                          PrivModeUncorrectableFaultW_priv; // from privileged unit before ECC OR
 
   // instruction fetch unit: PC, branch prediction, instruction cache
@@ -323,8 +324,13 @@ module wallypipelinedcore import cvw::*; #(parameter cvw_t P) (
             sfencevmaM, BigEndianM, wfiM, IntPendingM, PrivModeUncorrectableFaultW_priv} = '0;
   end
 
-  // Combine privilege-mode TMR fault with IEU ECC uncorrectable (DED) fault
-  assign PrivModeUncorrectableFaultW = PrivModeUncorrectableFaultW_priv | RegEccDedErrW;
+  // DED fault is sticky: once a double-bit error is seen it holds until reset
+  always_ff @(posedge clk)
+    if (reset) RegEccDedErrSticky <= 1'b0;
+    else       RegEccDedErrSticky <= RegEccDedErrSticky | RegEccDedErrW;
+
+  // Combine privilege-mode TMR fault with sticky IEU ECC uncorrectable (DED) fault
+  assign PrivModeUncorrectableFaultW = PrivModeUncorrectableFaultW_priv | RegEccDedErrSticky;
 
   // multiply/divide unit
   if (P.ZMMUL_SUPPORTED) begin : mdu
